@@ -16,7 +16,6 @@ import {
   Search,
   Send,
   Settings,
-  Sparkles,
   Square,
   Sun,
   Trash2,
@@ -32,6 +31,9 @@ import {
 } from "react";
 import MarkdownMessage from "./components/MarkdownMessage";
 import ToolCard from "./components/ToolCard";
+import ClaudeMascotIcon, {
+  type ClaudeMascotVariant,
+} from "./components/ClaudeMascotIcon";
 import ComposerTuningControls, {
   commonModels,
   effortInfo,
@@ -99,9 +101,9 @@ function MessageView({ message }: { message: ChatMessage }) {
 
   const isEmptyStreaming = message.status === "streaming" && !message.content;
   return (
-    <article className="message assistant-message">
-      <div className="assistant-avatar">
-        <Sparkles size={16} />
+      <article className="message assistant-message">
+        <div className="assistant-avatar">
+          <ClaudeMascotIcon />
       </div>
       <div className="assistant-content">
         {message.reasoning && (
@@ -496,9 +498,9 @@ export default function App() {
     <div className={`app-shell ${sidebarOpen ? "sidebar-visible" : "sidebar-hidden"}`}>
       <div className="window-drag-region" />
       <aside className="sidebar">
-        <div className="brand-row">
-          <div className="brand-mark">
-            <Sparkles size={17} />
+          <div className="brand-row">
+            <div className="brand-mark">
+              <ClaudeMascotIcon />
           </div>
           <span>Claude Code</span>
           <button
@@ -624,18 +626,20 @@ export default function App() {
           ) : (
             <div className="empty-conversation">
               <div className="hero-mark">
-                <Sparkles size={28} />
+                <ClaudeMascotIcon />
               </div>
               <h1>今天想做点什么？</h1>
               <p>Claude Code 已通过 CC Switch 接入。选择项目文件夹，然后像聊天一样描述任务。</p>
               <div className="quick-actions">
-                {[
-                  ["解释这个项目", "先浏览当前项目，告诉我它的结构、用途和启动方式。"],
-                  ["排查一个问题", "帮我检查当前项目的问题，先分析原因再提出修复方案。"],
-                  ["实现新功能", "请阅读当前项目，并帮我实现下面这个功能："],
-                ].map(([label, prompt]) => (
+                {(
+                  [
+                    ["解释这个项目", "先浏览当前项目，告诉我它的结构、用途和启动方式。", "explain"],
+                    ["排查一个问题", "帮我检查当前项目的问题，先分析原因再提出修复方案。", "debug"],
+                    ["实现新功能", "请阅读当前项目，并帮我实现下面这个功能：", "build"],
+                  ] satisfies Array<[string, string, ClaudeMascotVariant]>
+                ).map(([label, prompt, variant]) => (
                   <button key={label} onClick={() => setDraft(prompt)}>
-                    <Sparkles size={15} />
+                    <ClaudeMascotIcon variant={variant} />
                     <span>
                       <strong>{label}</strong>
                       <small>{prompt}</small>

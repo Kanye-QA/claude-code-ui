@@ -23,7 +23,7 @@
 
 ## 使用便携版
 
-从 GitHub Releases 下载 `Claude-Code-UI-0.1.0-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
+从 GitHub Releases 下载 1.0 正式版 `Claude-Code-UI-1.0.0-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
 
 首次运行若出现 Windows SmartScreen 提示，请先核对下载来源。当前社区构建没有商业代码签名。
 

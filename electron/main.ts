@@ -907,12 +907,14 @@ function registerIpc(): void {
 }
 
 function createWindow(): void {
+  const developmentIcon = join(__dirname, "..", "assets", "icon.png");
   mainWindow = new BrowserWindow({
     width: 1380,
     height: 900,
     minWidth: 960,
     minHeight: 640,
     backgroundColor: "#111310",
+    ...(existsSync(developmentIcon) ? { icon: developmentIcon } : {}),
     title: "Claude Code UI",
     titleBarStyle: "hidden",
     titleBarOverlay: {
