@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.tsbuildinfo
+ui-screenshot*.png
+.DS_Store
+
