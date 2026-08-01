@@ -33,7 +33,9 @@ export interface ChatMessage {
 
 export interface ChatSession {
   id: string;
+  projectId: string;
   title: string;
+  titleEdited?: boolean;
   cwd: string;
   createdAt: string;
   updatedAt: string;
@@ -47,6 +49,14 @@ export interface ChatSession {
   messages: ChatMessage[];
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppSettings {
   defaultCwd: string;
   defaultPermissionMode: PermissionMode;
@@ -57,6 +67,7 @@ export interface AppSettings {
 }
 
 export interface AppState {
+  projects: Project[];
   sessions: ChatSession[];
   settings: AppSettings;
   activeSessionIds: string[];
@@ -71,6 +82,7 @@ export interface ClaudeStatus {
 
 export interface ClaudeUIApi {
   getState(): Promise<AppState>;
+  createProject(input: Pick<Project, "name" | "cwd">): Promise<Project>;
   createSession(input?: Partial<ChatSession>): Promise<ChatSession>;
   updateSession(id: string, patch: Partial<ChatSession>): Promise<ChatSession>;
   deleteSession(id: string): Promise<boolean>;

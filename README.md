@@ -7,6 +7,7 @@
 ## 功能
 
 - 原生 Windows 桌面窗口，无需启动网页服务器。
+- 按项目归档会话；每个项目可单独新建多段对话并重命名。
 - 选择项目文件夹后直接与 Claude Code 对话。
 - 会话历史、Markdown、代码块复制、思考过程与工具调用展示。
 - 支持停止正在运行的任务。
@@ -23,16 +24,17 @@
 
 ## 使用便携版
 
-从 GitHub Releases 下载 1.0 正式版 `Claude-Code-UI-1.0.0-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
+从 GitHub Releases 下载 2.0 正式版 `Claude-Code-UI-2.0-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
 
 首次运行若出现 Windows SmartScreen 提示，请先核对下载来源。当前社区构建没有商业代码签名。
 
 ## 基本使用
 
 1. 打开 Claude Code UI。
-2. 点击输入框下方的文件夹按钮，选择项目目录。
-3. 输入任务并按 Enter 发送；Shift + Enter 换行。
-4. 使用输入台按钮切换模型、推理强度和权限模式。
+2. 点击左侧“新建项目”，命名并选择项目目录；系统会自动创建第一段会话。
+3. 点击项目名称右侧的“+”可在该项目下继续新建会话；点击会话标题旁的铅笔可重命名。
+4. 输入任务并按 Enter 发送；Shift + Enter 换行。
+5. 使用输入台按钮切换模型、推理强度和权限模式。
 
 模型选择“跟随 CC Switch”时，不传入模型覆盖参数，由本机 Claude Code 配置决定实际模型；也可以选择 `sonnet`、`opus`、`haiku`、`fable`、`deepseek-v4-pro`，或输入其他模型 ID。
 

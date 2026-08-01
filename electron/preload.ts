@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const api = {
   getState: () => ipcRenderer.invoke("state:get"),
+  createProject: (input: unknown) => ipcRenderer.invoke("project:create", input),
   createSession: (input?: unknown) => ipcRenderer.invoke("session:create", input),
   updateSession: (id: string, patch: unknown) =>
     ipcRenderer.invoke("session:update", id, patch),

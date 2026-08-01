@@ -15,7 +15,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 type PermissionMode = "plan" | "auto" | "acceptEdits" | "dontAsk";
 type EffortLevel = "" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -54,7 +54,9 @@ interface ChatMessage {
 
 interface ChatSession {
   id: string;
+  projectId: string;
   title: string;
+  titleEdited?: boolean;
   cwd: string;
   createdAt: string;
   updatedAt: string;
@@ -68,6 +70,14 @@ interface ChatSession {
   messages: ChatMessage[];
 }
 
+interface Project {
+  id: string;
+  name: string;
+  cwd: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AppSettings {
   defaultCwd: string;
   defaultPermissionMode: PermissionMode;
@@ -78,7 +88,8 @@ interface AppSettings {
 }
 
 interface AppStore {
-  version: 1;
+  version: 2;
+  projects: Project[];
   sessions: ChatSession[];
   settings: AppSettings;
 }
@@ -98,6 +109,7 @@ let storePath = "";
 const activeJobs = new Map<string, ActiveJob>();
 const syncTimers = new Map<string, NodeJS.Timeout>();
 let saveTimer: NodeJS.Timeout | null = null;
+const previewMode = process.env.CLAUDE_UI_MOCK === "1";
 
 const effortLevels: EffortLevel[] = ["", "low", "medium", "high", "xhigh", "max"];
 
@@ -149,8 +161,9 @@ function normalizeContextUsage(value: unknown): ContextUsage {
 
 function defaultStore(): AppStore {
   const documents = app.getPath("documents");
-  return {
-    version: 1,
+  const base: AppStore = {
+    version: 2,
+    projects: [],
     sessions: [],
     settings: {
       defaultCwd: documents,
@@ -161,19 +174,123 @@ function defaultStore(): AppStore {
       theme: "system",
     },
   };
+  if (!previewMode) return base;
+
+  const timestamp = now();
+  const project: Project = {
+    id: "preview-project",
+    name: "Claude Code UI",
+    cwd: process.cwd(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  return {
+    ...base,
+    projects: [project],
+    settings: { ...base.settings, defaultCwd: process.cwd(), theme: "dark" },
+    sessions: [
+      {
+        id: "preview-conversation-a",
+        projectId: project.id,
+        title: "1.0 版本优化规划",
+        titleEdited: true,
+        cwd: project.cwd,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        started: false,
+        permissionMode: "auto",
+        effort: "",
+        contextUsage: emptyContextUsage(),
+        status: "idle",
+        messages: [],
+      },
+      {
+        id: "preview-conversation-b",
+        projectId: project.id,
+        title: "排查删除窗口样式",
+        titleEdited: true,
+        cwd: project.cwd,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        started: false,
+        permissionMode: "auto",
+        effort: "",
+        contextUsage: emptyContextUsage(),
+        status: "idle",
+        messages: [],
+      },
+    ],
+  };
+}
+
+function projectNameFromPath(cwd: string): string {
+  return basename(cwd) || cwd || "未命名项目";
+}
+
+function createProjectRecord(name: string, cwd: string): Project {
+  const timestamp = now();
+  return {
+    id: randomUUID(),
+    name: name.trim() || projectNameFromPath(cwd),
+    cwd,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function projectById(id: string): Project {
+  const project = store.projects.find((item) => item.id === id);
+  if (!project) throw new Error("项目不存在，请重新选择项目后再试。");
+  return project;
 }
 
 function loadStore(): AppStore {
   storePath = join(app.getPath("userData"), "sessions.json");
   try {
-    const parsed = JSON.parse(readFileSync(storePath, "utf8")) as AppStore;
-    if (parsed.version !== 1 || !Array.isArray(parsed.sessions)) {
+    const parsed = JSON.parse(readFileSync(storePath, "utf8")) as Omit<
+      AppStore,
+      "version" | "projects"
+    > & {
+      version: number;
+      projects?: Project[];
+    };
+    if ((parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.sessions)) {
       return defaultStore();
     }
     const defaults = defaultStore();
     parsed.settings = { ...defaults.settings, ...parsed.settings };
-    parsed.sessions = parsed.sessions.map((session) => ({
+    const projects = Array.isArray(parsed.projects)
+      ? parsed.projects
+          .filter(
+            (project): project is Project =>
+              Boolean(project) &&
+              typeof project.id === "string" &&
+              typeof project.name === "string" &&
+              typeof project.cwd === "string",
+          )
+          .map((project) => ({
+            ...project,
+            name: project.name.trim() || projectNameFromPath(project.cwd),
+            createdAt: project.createdAt || now(),
+            updatedAt: project.updatedAt || now(),
+          }))
+      : [];
+    const projectForCwd = (cwd: string): Project => {
+      const existing = projects.find((project) => project.cwd === cwd);
+      if (existing) return existing;
+      const project = createProjectRecord(projectNameFromPath(cwd), cwd);
+      projects.push(project);
+      return project;
+    };
+    parsed.sessions = parsed.sessions.map((session) => {
+      const normalizedCwd = typeof session.cwd === "string" ? session.cwd : defaults.settings.defaultCwd;
+      const existingProject = projects.find((project) => project.id === session.projectId);
+      const project = existingProject ?? projectForCwd(normalizedCwd);
+      return {
       ...session,
+      projectId: project.id,
+      cwd: normalizedCwd,
+      titleEdited: Boolean(session.titleEdited),
       status: "idle",
       permissionMode: session.permissionMode ?? "auto",
       effort: isEffortLevel(session.effort)
@@ -187,8 +304,9 @@ function loadStore(): AppStore {
               : message,
           )
         : [],
-    }));
-    return parsed;
+      };
+    });
+    return { ...parsed, version: 2, projects };
   } catch {
     return defaultStore();
   }
@@ -222,6 +340,7 @@ function assistantMessage(session: ChatSession, id: string): ChatMessage {
 
 function publicState() {
   return {
+    projects: [...store.projects].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     sessions: [...store.sessions].sort((a, b) =>
       b.updatedAt.localeCompare(a.updatedAt),
     ),
@@ -718,13 +837,35 @@ function startClaude(session: ChatSession, prompt: string, assistantId: string):
 function registerIpc(): void {
   ipcMain.handle("state:get", () => publicState());
 
+  ipcMain.handle("project:create", (_event, input: Pick<Project, "name" | "cwd">) => {
+    const cwd = typeof input?.cwd === "string" ? resolve(input.cwd) : "";
+    if (!cwd || !isDirectory(cwd)) throw new Error("请选择一个有效的项目文件夹。");
+    const name = typeof input?.name === "string" ? input.name.trim() : "";
+    const existing = store.projects.find((project) => project.cwd === cwd);
+    if (existing) return existing;
+    const project = createProjectRecord(name || projectNameFromPath(cwd), cwd);
+    store.projects.push(project);
+    scheduleSave();
+    emitState();
+    return project;
+  });
+
   ipcMain.handle("session:create", (_event, input?: Partial<ChatSession>) => {
-    const cwd = input?.cwd && isDirectory(input.cwd) ? resolve(input.cwd) : store.settings.defaultCwd;
+    const requestedCwd = input?.cwd && isDirectory(input.cwd) ? resolve(input.cwd) : store.settings.defaultCwd;
+    const project = input?.projectId
+      ? projectById(input.projectId)
+      : store.projects.find((item) => item.cwd === requestedCwd) ?? (() => {
+          const created = createProjectRecord(projectNameFromPath(requestedCwd), requestedCwd);
+          store.projects.push(created);
+          return created;
+        })();
     const timestamp = now();
     const session: ChatSession = {
       id: randomUUID(),
+      projectId: project.id,
       title: "新会话",
-      cwd: isDirectory(cwd) ? cwd : app.getPath("documents"),
+      titleEdited: false,
+      cwd: isDirectory(project.cwd) ? project.cwd : app.getPath("documents"),
       createdAt: timestamp,
       updatedAt: timestamp,
       started: false,
@@ -745,7 +886,10 @@ function registerIpc(): void {
   ipcMain.handle("session:update", (_event, id: string, patch: Partial<ChatSession>) => {
     const session = sessionById(id);
     if (activeJobs.has(id)) throw new Error("Claude 正在回复，结束后再修改会话设置。");
-    if (typeof patch.title === "string") session.title = patch.title.trim() || "新会话";
+    if (typeof patch.title === "string") {
+      session.title = patch.title.trim() || "新会话";
+      session.titleEdited = true;
+    }
     if (typeof patch.cwd === "string") {
       const cwd = resolve(patch.cwd);
       if (!isDirectory(cwd)) throw new Error("所选项目文件夹不存在。");
@@ -802,7 +946,7 @@ function registerIpc(): void {
       status: "streaming",
       toolCalls: [],
     };
-    if (session.messages.length === 0 || session.title === "新会话") {
+    if (session.messages.length === 0 && !session.titleEdited) {
       session.title = titleFromPrompt(prompt);
     }
     session.messages.push(userMessage, response);
@@ -949,6 +1093,10 @@ function createWindow(): void {
   const devServer = process.env.VITE_DEV_SERVER_URL;
   if (devServer) void mainWindow.loadURL(devServer);
   else void mainWindow.loadFile(join(__dirname, "..", "dist", "index.html"));
+}
+
+if (previewMode) {
+  app.setPath("userData", join(app.getPath("temp"), "Claude-Code-UI-本地测试版"));
 }
 
 app.whenReady().then(() => {

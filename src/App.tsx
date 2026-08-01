@@ -6,6 +6,7 @@ import {
   Clock3,
   Folder,
   FolderOpen,
+  FolderPlus,
   Menu,
   MessageSquareText,
   Moon,
@@ -13,6 +14,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  Pencil,
   Search,
   Send,
   Settings,
@@ -27,6 +29,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type KeyboardEvent,
 } from "react";
 import MarkdownMessage from "./components/MarkdownMessage";
@@ -47,9 +50,11 @@ import type {
   ClaudeStatus,
   EffortLevel,
   PermissionMode,
+  Project,
 } from "./types";
 
 const emptyState: AppState = {
+  projects: [],
   sessions: [],
   settings: {
     defaultCwd: "",
@@ -309,6 +314,154 @@ function SettingsPanel({ state, claudeStatus, onClose, onUpdate }: SettingsPanel
   );
 }
 
+function DeleteConversationDialog({
+  session,
+  onClose,
+  onConfirm,
+}: {
+  session: ChatSession;
+  onClose(): void;
+  onConfirm(): Promise<void>;
+}) {
+  const [removing, setRemoving] = useState(false);
+
+  const remove = async () => {
+    setRemoving(true);
+    try {
+      await onConfirm();
+      onClose();
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose}>
+      <section
+        className="theme-dialog confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-conversation-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="dialog-icon dialog-icon-danger">
+          <Trash2 size={18} />
+        </div>
+        <div className="dialog-copy">
+          <p className="eyebrow">删除会话</p>
+          <h2 id="delete-conversation-title">删除“{session.title}”？</h2>
+          <p>只会删除本应用中的聊天记录，不会修改项目文件。</p>
+        </div>
+        <div className="dialog-actions">
+          <button className="dialog-secondary" onClick={onClose} disabled={removing}>
+            取消
+          </button>
+          <button className="dialog-danger" onClick={() => void remove()} disabled={removing}>
+            <Trash2 size={14} />
+            {removing ? "正在删除" : "删除会话"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NewProjectDialog({
+  defaultCwd,
+  onClose,
+  onCreate,
+}: {
+  defaultCwd: string;
+  onClose(): void;
+  onCreate(input: Pick<Project, "name" | "cwd">): Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [cwd, setCwd] = useState(defaultCwd);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const chooseFolder = async () => {
+    const folder = await window.claudeUI.selectDirectory(cwd || defaultCwd);
+    if (folder) {
+      setCwd(folder);
+      if (!name.trim()) setName(tail(folder));
+    }
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!cwd) {
+      setError("请先选择项目文件夹。");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onCreate({ name: name.trim() || tail(cwd), cwd });
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose}>
+      <form
+        className="theme-dialog project-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-project-title"
+        onSubmit={(event) => void submit(event)}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="dialog-header">
+          <div className="dialog-icon">
+            <FolderPlus size={18} />
+          </div>
+          <div>
+            <p className="eyebrow">项目空间</p>
+            <h2 id="new-project-title">新建项目</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="dialog-form">
+          <label>
+            项目名称
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例如：网站改版"
+            />
+          </label>
+          <label>
+            项目文件夹
+            <button className="dialog-path-picker" type="button" onClick={() => void chooseFolder()}>
+              <FolderOpen size={16} />
+              <span>{cwd || "选择文件夹"}</span>
+            </button>
+          </label>
+          <p className="dialog-hint">创建后会自动在这个项目下新建第一段会话。</p>
+          {error && <p className="dialog-error">{error}</p>}
+        </div>
+        <footer className="dialog-actions">
+          <button className="dialog-secondary" type="button" onClick={onClose} disabled={saving}>
+            取消
+          </button>
+          <button className="dialog-primary" type="submit" disabled={saving}>
+            <FolderPlus size={14} />
+            {saving ? "正在创建" : "创建项目"}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>(emptyState);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -316,23 +469,36 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
+  const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
   const [toast, setToast] = useState<string>("");
-  const initialized = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const selected = state.sessions.find((session) => session.id === selectedId);
+  const selectedProject = selected
+    ? state.projects.find((project) => project.id === selected.projectId)
+    : undefined;
   const active = selected ? state.activeSessionIds.includes(selected.id) : false;
-  const filteredSessions = useMemo(() => {
+  const projectGroups = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return state.sessions;
-    return state.sessions.filter(
-      (session) =>
-        session.title.toLowerCase().includes(query) ||
-        session.cwd.toLowerCase().includes(query),
-    );
-  }, [search, state.sessions]);
+    return state.projects
+      .map((project) => {
+        const sessions = state.sessions.filter((session) => session.projectId === project.id);
+        const matchesProject =
+          !query ||
+          project.name.toLowerCase().includes(query) ||
+          project.cwd.toLowerCase().includes(query);
+        const matches = matchesProject
+          ? sessions
+          : sessions.filter((session) => session.title.toLowerCase().includes(query));
+        return { project, sessions: matches, visible: matchesProject || matches.length > 0 };
+      })
+      .filter((group) => group.visible);
+  }, [search, state.projects, state.sessions]);
   const contextInput = selected
     ? selected.contextUsage.inputTokens +
       selected.contextUsage.cacheCreationInputTokens +
@@ -362,10 +528,6 @@ export default function App() {
           setSelectedId(remembered);
         } else if (next.sessions[0]) {
           setSelectedId(next.sessions[0].id);
-        } else if (!initialized.current) {
-          initialized.current = true;
-          const created = await window.claudeUI.createSession();
-          setSelectedId(created.id);
         }
       })
       .catch(reportError);
@@ -406,9 +568,16 @@ export default function App() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 190)}px`;
   }, [draft]);
 
-  const createSession = async () => {
+  const createSession = async (project = selectedProject) => {
+    if (!project) {
+      setProjectDialogOpen(true);
+      return;
+    }
     try {
-      const session = await window.claudeUI.createSession();
+      const session = await window.claudeUI.createSession({
+        projectId: project.id,
+        cwd: project.cwd,
+      });
       setSelectedId(session.id);
       setDraft("");
       requestAnimationFrame(() => textareaRef.current?.focus());
@@ -417,12 +586,38 @@ export default function App() {
     }
   };
 
-  const removeSession = async (session: ChatSession) => {
-    if (!window.confirm(`删除会话“${session.title}”？\n只删除 UI 历史，不会删除项目文件。`)) {
-      return;
-    }
+  const createProject = async (input: Pick<Project, "name" | "cwd">) => {
     try {
-      await window.claudeUI.deleteSession(session.id);
+      const project = await window.claudeUI.createProject(input);
+      await createSession(project);
+    } catch (error) {
+      reportError(error);
+      throw error;
+    }
+  };
+
+  const confirmRemoveSession = async () => {
+    if (!deleteTarget) return;
+    try {
+      await window.claudeUI.deleteSession(deleteTarget.id);
+    } catch (error) {
+      reportError(error);
+      throw error;
+    }
+  };
+
+  const beginRename = (session: ChatSession) => {
+    if (state.activeSessionIds.includes(session.id)) return;
+    setSelectedId(session.id);
+    setRenameDraft(session.title);
+    setRenamingSession(session);
+  };
+
+  const saveRename = async () => {
+    if (!renamingSession) return;
+    try {
+      await window.claudeUI.updateSession(renamingSession.id, { title: renameDraft });
+      setRenamingSession(null);
     } catch (error) {
       reportError(error);
     }
@@ -480,7 +675,10 @@ export default function App() {
   useEffect(() => {
     const onShortcut = (event: globalThis.KeyboardEvent) => {
       const commandKey = event.ctrlKey || event.metaKey;
-      if (commandKey && event.key.toLowerCase() === "n") {
+      if (commandKey && event.shiftKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        setProjectDialogOpen(true);
+      } else if (commandKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
         void createSession();
       } else if (commandKey && event.key === ",") {
@@ -488,11 +686,15 @@ export default function App() {
         setSettingsOpen(true);
       } else if (event.key === "Escape" && settingsOpen) {
         setSettingsOpen(false);
+      } else if (event.key === "Escape" && projectDialogOpen) {
+        setProjectDialogOpen(false);
+      } else if (event.key === "Escape" && renamingSession) {
+        setRenamingSession(null);
       }
     };
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
-  }, [settingsOpen]);
+  }, [projectDialogOpen, renamingSession, settingsOpen, selectedProject]);
 
   return (
     <div className={`app-shell ${sidebarOpen ? "sidebar-visible" : "sidebar-hidden"}`}>
@@ -503,6 +705,7 @@ export default function App() {
               <ClaudeMascotIcon />
           </div>
           <span>Claude Code</span>
+          {window.location.protocol === "http:" && <span className="mock-badge">本地测试版</span>}
           <button
             className="icon-button sidebar-toggle"
             onClick={() => setSidebarOpen(false)}
@@ -512,10 +715,10 @@ export default function App() {
           </button>
         </div>
 
-        <button className="new-chat" onClick={() => void createSession()}>
-          <Plus size={17} />
-          新会话
-          <span>Ctrl N</span>
+        <button className="new-chat" onClick={() => setProjectDialogOpen(true)}>
+          <FolderPlus size={17} />
+          新建项目
+          <span>Ctrl ⇧ N</span>
         </button>
 
         <div className="sidebar-search">
@@ -528,40 +731,73 @@ export default function App() {
           />
         </div>
 
-        <div className="session-label">最近</div>
+        <div className="session-label">项目与会话</div>
         <nav className="session-list">
-          {filteredSessions.map((session) => (
-            <div
-              key={session.id}
-              className={`session-row ${selectedId === session.id ? "active" : ""}`}
-            >
-              <button
-                className="session-select"
-                onClick={() => setSelectedId(session.id)}
-                aria-current={selectedId === session.id ? "page" : undefined}
-              >
-                <MessageSquareText size={15} />
-                <span className="session-copy">
-                  <strong>{session.title}</strong>
-                  <small>{tail(session.cwd)} · {relativeTime(session.updatedAt)}</small>
+          {projectGroups.map(({ project, sessions }) => (
+            <section className="project-group" key={project.id}>
+              <header className="project-heading">
+                <span className="project-name" title={project.cwd}>
+                  <Folder size={14} />
+                  <strong>{project.name}</strong>
                 </span>
-              </button>
-              {state.activeSessionIds.includes(session.id) ? (
-                <span className="live-dot" />
-              ) : (
                 <button
-                  className="delete-session"
-                  aria-label={`删除会话：${session.title}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void removeSession(session);
-                  }}
+                  className="project-new-chat"
+                  onClick={() => void createSession(project)}
+                  title={`在“${project.name}”中新建会话`}
+                  aria-label={`在“${project.name}”中新建会话`}
                 >
-                  <Trash2 size={14} />
+                  <Plus size={15} />
+                </button>
+              </header>
+              {sessions.length ? (
+                sessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className={`session-row ${selectedId === session.id ? "active" : ""}`}
+                  >
+                    <button
+                      className="session-select"
+                      onClick={() => setSelectedId(session.id)}
+                      aria-current={selectedId === session.id ? "page" : undefined}
+                    >
+                      <MessageSquareText size={15} />
+                      <span className="session-copy">
+                        <strong>{session.title}</strong>
+                        <small>{relativeTime(session.updatedAt)}</small>
+                      </span>
+                    </button>
+                    {state.activeSessionIds.includes(session.id) ? (
+                      <span className="live-dot" />
+                    ) : (
+                      <span className="session-actions">
+                        <button
+                          className="session-action"
+                          aria-label={`重命名会话：${session.title}`}
+                          onClick={() => beginRename(session)}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          className="session-action delete-session"
+                          aria-label={`删除会话：${session.title}`}
+                          onClick={() => setDeleteTarget(session)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <button className="project-empty" onClick={() => void createSession(project)}>
+                  <Plus size={13} /> 新建第一段会话
                 </button>
               )}
-            </div>
+            </section>
           ))}
+          {!projectGroups.length && (
+            <div className="sidebar-empty">没有匹配的项目或会话</div>
+          )}
         </nav>
 
         <div className="sidebar-footer">
@@ -588,11 +824,49 @@ export default function App() {
             </button>
           )}
           <div className="conversation-heading">
-            <strong>{selected?.title || "Claude Code UI"}</strong>
+            {selected && renamingSession?.id === selected.id ? (
+              <form
+                className="conversation-rename"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveRename();
+                }}
+              >
+                <input
+                  autoFocus
+                  value={renameDraft}
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                  aria-label="会话名称"
+                />
+                <button className="icon-button rename-save" type="submit" aria-label="保存名称">
+                  <Check size={15} />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => setRenamingSession(null)}
+                  aria-label="取消重命名"
+                >
+                  <X size={15} />
+                </button>
+              </form>
+            ) : selected ? (
+              <button
+                className="conversation-title"
+                onClick={() => beginRename(selected)}
+                disabled={active}
+                title="点击重命名会话"
+              >
+                <strong>{selected.title}</strong>
+                <Pencil size={13} />
+              </button>
+            ) : (
+              <strong>Claude Code UI</strong>
+            )}
             {selected && (
               <button className="folder-chip" onClick={chooseFolder} disabled={active}>
                 <Folder size={13} />
-                {tail(selected.cwd)}
+                {tail(selectedProject?.cwd || selected.cwd)}
               </button>
             )}
           </div>
@@ -628,9 +902,19 @@ export default function App() {
               <div className="hero-mark">
                 <ClaudeMascotIcon />
               </div>
-              <h1>今天想做点什么？</h1>
-              <p>Claude Code 已通过 CC Switch 接入。选择项目文件夹，然后像聊天一样描述任务。</p>
-              <div className="quick-actions">
+              <h1>{selected ? "今天想做点什么？" : "从一个项目开始"}</h1>
+              <p>
+                {selected
+                  ? "Claude Code 已通过 CC Switch 接入。选择项目文件夹，然后像聊天一样描述任务。"
+                  : "项目会集中保存同一文件夹下的会话，让每个任务都有清晰的上下文。"}
+              </p>
+              {!selected ? (
+                <button className="empty-project-button" onClick={() => setProjectDialogOpen(true)}>
+                  <FolderPlus size={17} />
+                  新建第一个项目
+                </button>
+              ) : (
+                <div className="quick-actions">
                 {(
                   [
                     ["解释这个项目", "先浏览当前项目，告诉我它的结构、用途和启动方式。", "explain"],
@@ -646,7 +930,8 @@ export default function App() {
                     </span>
                   </button>
                 ))}
-              </div>
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -736,6 +1021,22 @@ export default function App() {
           claudeStatus={claudeStatus}
           onClose={() => setSettingsOpen(false)}
           onUpdate={updateSettings}
+        />
+      )}
+
+      {projectDialogOpen && (
+        <NewProjectDialog
+          defaultCwd={state.settings.defaultCwd}
+          onClose={() => setProjectDialogOpen(false)}
+          onCreate={createProject}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteConversationDialog
+          session={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={confirmRemoveSession}
         />
       )}
 
