@@ -2,16 +2,28 @@
 
 一个非官方、仅在本机运行的 Windows 桌面界面，让 Claude Code 可以像聊天应用一样使用。
 
+## ⬇ 最新正式版
+
+[![最新正式版](https://img.shields.io/github/v/release/Kanye-QA/claude-code-ui?label=%E6%9C%80%E6%96%B0%E6%AD%A3%E5%BC%8F%E7%89%88)](https://github.com/Kanye-QA/claude-code-ui/releases/latest)
+
+**当前版本：3.1**  ·  [下载 Windows 便携版（Claude-Code-UI-3.1-portable.exe）](https://github.com/Kanye-QA/claude-code-ui/releases/download/v3.1/Claude-Code-UI-3.1-portable.exe)
+
+下载后双击即可运行，不需要安装 Node.js。旧版本和完整说明都保留在 [Releases](https://github.com/Kanye-QA/claude-code-ui/releases)。
+
+> 以后每次正式发版都会优先更新这一块：版本号、下载按钮和更新摘要；GitHub 右侧的 **Latest** 也会自动指向最新正式版。
+
 > 本项目与 Anthropic 无隶属或官方合作关系。Claude、Claude Code 等名称归其各自权利人所有。
 
-## 3.1 正式版
+## 更新摘要
+
+### 3.1 正式版
 - 余额工具区文案优化为“自动查询”，保留手动刷新。
 
-## 3.0 正式版
+### 3.0 正式版
 - 新增 DeepSeek 余额查询：输入栏工具区展示余额，首次打开后每 10 秒自动刷新，也可手动点击刷新。
 - 余额请求仅在本机使用当前 Claude/CC Switch 配置中的凭据，不会保存或上传凭据；暂不支持的供应商会明确提示。
 
-## 2.0 正式版
+### 2.0 正式版
 
 - 项目与会话分层管理：每个项目可保存多段独立对话。
 - 支持在项目下快速新建会话，以及直接重命名会话。
