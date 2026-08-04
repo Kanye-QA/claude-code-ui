@@ -4,6 +4,9 @@
 
 > 本项目与 Anthropic 无隶属或官方合作关系。Claude、Claude Code 等名称归其各自权利人所有。
 
+## 3.1 正式版
+- 余额工具区文案优化为“自动查询”，保留手动刷新。
+
 ## 3.0 正式版
 - 新增 DeepSeek 余额查询：输入栏工具区展示余额，首次打开后每 10 秒自动刷新，也可手动点击刷新。
 - 余额请求仅在本机使用当前 Claude/CC Switch 配置中的凭据，不会保存或上传凭据；暂不支持的供应商会明确提示。
@@ -34,7 +37,7 @@
 
 ## 使用便携版
 
-从 GitHub Releases 下载 3.0 正式版 `Claude-Code-UI-3.0-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
+从 GitHub Releases 下载 3.1 正式版 `Claude-Code-UI-3.1-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
 
 首次运行若出现 Windows SmartScreen 提示，请先核对下载来源。当前社区构建没有商业代码签名。
 

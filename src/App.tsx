@@ -110,7 +110,7 @@ function balanceDisplay(balance: BalanceStatus | null): string {
 }
 
 function balanceHint(balance: BalanceStatus | null): string {
-  if (!balance) return "正在读取当前供应商余额；每 10 秒自动查询一次。";
+  if (!balance) return "正在读取当前供应商余额；自动查询已开启。";
   const entry = balance.balances[0];
   if (balance.error) return `${balance.provider}：${balance.error} 点击手动刷新。`;
   if (!entry) return `${balance.provider}：暂无可展示的余额。`;
@@ -121,7 +121,7 @@ function balanceHint(balance: BalanceStatus | null): string {
   ]
     .filter(Boolean)
     .join(" · ");
-  return `${balance.provider}：${details}。每 10 秒自动查询，点击可手动刷新。`;
+  return `${balance.provider}：${details}。自动查询已开启，点击可手动刷新。`;
 }
 
 function MessageView({ message }: { message: ChatMessage }) {
@@ -548,7 +548,8 @@ export default function App() {
     window.setTimeout(() => setToast(""), 4_500);
   };
 
-  const refreshBalance = async () => {
+  const refreshBalance = async (keepSpinnerForOneSecond = false) => {
+    const startedAt = Date.now();
     setBalanceLoading(true);
     try {
       setBalance(await window.claudeUI.queryBalance());
@@ -562,6 +563,10 @@ export default function App() {
         error: "余额查询服务不可用。",
       });
     } finally {
+      const remaining = keepSpinnerForOneSecond ? 1_000 - (Date.now() - startedAt) : 0;
+      if (remaining > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
+      }
       setBalanceLoading(false);
     }
   };
@@ -1025,7 +1030,7 @@ export default function App() {
                 <button
                   type="button"
                   className={`balance-button balance-${balance?.status ?? "loading"}`}
-                  onClick={() => void refreshBalance()}
+                  onClick={() => void refreshBalance(true)}
                   disabled={balanceLoading}
                   title={balanceHint(balance)}
                   aria-label="手动查询余额"
@@ -1033,7 +1038,7 @@ export default function App() {
                   <Wallet size={14} />
                   <span className="balance-copy">
                     <strong>余额 {balanceDisplay(balance)}</strong>
-                    <small>{balance?.provider || "余额查询"} · 10 秒自动</small>
+                    <small>{balance?.provider || "余额查询"} · 自动查询</small>
                   </span>
                   <RefreshCw size={12} className={balanceLoading ? "spin" : ""} />
                 </button>
