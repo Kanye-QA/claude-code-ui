@@ -16,6 +16,7 @@ const api = {
   openPath: (path: string) => ipcRenderer.invoke("path:open", path),
   openExternal: (url: string) => ipcRenderer.invoke("external:open", url),
   claudeStatus: () => ipcRenderer.invoke("claude:status"),
+  queryBalance: () => ipcRenderer.invoke("balance:query"),
   onStateChanged: (callback: (state: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
     ipcRenderer.on("state:changed", listener);

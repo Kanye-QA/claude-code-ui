@@ -1956,6 +1956,72 @@ summary:focus-visible {
   gap: 8px !important;
 }
 
+.balance-button {
+  display: inline-flex;
+  height: 31px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 80%, var(--panel));
+  color: var(--text-soft);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.balance-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.balance-button:disabled {
+  cursor: default;
+}
+
+.balance-button > svg:first-child {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.balance-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.05;
+}
+
+.balance-copy strong,
+.balance-copy small {
+  white-space: nowrap;
+}
+
+.balance-copy strong {
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.balance-copy small {
+  color: var(--text-muted);
+  font-size: 7.5px;
+}
+
+.balance-ok .balance-copy strong {
+  color: var(--green);
+}
+
+.balance-unavailable .balance-copy strong,
+.balance-unsupported .balance-copy strong {
+  color: var(--yellow);
+}
+
+.balance-error .balance-copy strong {
+  color: var(--red);
+}
+
 .context-meter {
   display: inline-flex;
   align-items: center;

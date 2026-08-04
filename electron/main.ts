@@ -87,6 +87,22 @@ interface AppSettings {
   theme: "system" | "light" | "dark";
 }
 
+interface BalanceEntry {
+  currency: string;
+  total: string;
+  granted?: string;
+  toppedUp?: string;
+}
+
+interface BalanceStatus {
+  status: "ok" | "unavailable" | "unsupported" | "error";
+  provider: string;
+  available: boolean;
+  balances: BalanceEntry[];
+  checkedAt: string;
+  error?: string;
+}
+
 interface AppStore {
   version: 2;
   projects: Project[];
@@ -393,6 +409,93 @@ function resolveClaudeExecutable(): string {
 
   const match = candidates.find((candidate) => existsSync(candidate));
   return match ?? "claude";
+}
+
+function balanceResult(
+  status: BalanceStatus["status"],
+  provider: string,
+  available: boolean,
+  balances: BalanceEntry[] = [],
+  error?: string,
+): BalanceStatus {
+  return { status, provider, available, balances, checkedAt: now(), error };
+}
+
+async function queryBalance(): Promise<BalanceStatus> {
+  if (previewMode) {
+    return balanceResult("ok", "DeepSeek", true, [
+      { currency: "CNY", total: "28.60", granted: "3.60", toppedUp: "25.00" },
+    ]);
+  }
+
+  const settingsPath = join(app.getPath("home"), ".claude", "settings.json");
+  let env: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    env = parsed.env && typeof parsed.env === "object" ? (parsed.env as Record<string, unknown>) : null;
+  } catch {
+    return balanceResult("error", "当前供应商", false, [], "未找到可读取的 Claude 配置。");
+  }
+
+  const baseUrl = typeof env?.ANTHROPIC_BASE_URL === "string" ? env.ANTHROPIC_BASE_URL : "";
+  const token =
+    typeof env?.ANTHROPIC_AUTH_TOKEN === "string"
+      ? env.ANTHROPIC_AUTH_TOKEN
+      : typeof env?.ANTHROPIC_API_KEY === "string"
+        ? env.ANTHROPIC_API_KEY
+        : "";
+  if (!baseUrl || !token) {
+    return balanceResult("error", "当前供应商", false, [], "配置中缺少查询余额所需的凭据。");
+  }
+
+  let endpoint: URL;
+  try {
+    const configured = new URL(baseUrl);
+    if (configured.hostname.toLowerCase() !== "api.deepseek.com") {
+      return balanceResult(
+        "unsupported",
+        configured.hostname,
+        false,
+        [],
+        "当前供应商暂未提供自动余额查询。",
+      );
+    }
+    endpoint = new URL("/user/balance", configured.origin);
+  } catch {
+    return balanceResult("error", "当前供应商", false, [], "供应商地址格式不正确。");
+  }
+
+  try {
+    const response = await fetch(endpoint, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) {
+      return balanceResult("error", "DeepSeek", false, [], `查询失败（${response.status}）。`);
+    }
+    const payload = (await response.json()) as Record<string, unknown>;
+    const rawBalances = Array.isArray(payload.balance_infos) ? payload.balance_infos : [];
+    const balances = rawBalances.flatMap((item): BalanceEntry[] => {
+      if (!item || typeof item !== "object") return [];
+      const row = item as Record<string, unknown>;
+      if (typeof row.currency !== "string" || row.total_balance === undefined) return [];
+      return [
+        {
+          currency: row.currency,
+          total: String(row.total_balance),
+          granted: row.granted_balance === undefined ? undefined : String(row.granted_balance),
+          toppedUp: row.topped_up_balance === undefined ? undefined : String(row.topped_up_balance),
+        },
+      ];
+    });
+    return balanceResult("ok", "DeepSeek", payload.is_available === true, balances);
+  } catch (error) {
+    const message = error instanceof Error && error.name === "TimeoutError" ? "查询超时，请稍后手动刷新。" : "余额服务暂时不可用。";
+    return balanceResult("error", "DeepSeek", false, [], message);
+  }
 }
 
 function titleFromPrompt(prompt: string): string {
@@ -1048,6 +1151,8 @@ function registerIpc(): void {
       );
     });
   });
+
+  ipcMain.handle("balance:query", () => queryBalance());
 }
 
 function createWindow(): void {

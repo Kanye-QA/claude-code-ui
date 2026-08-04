@@ -15,12 +15,14 @@ import {
   PanelLeftOpen,
   Plus,
   Pencil,
+  RefreshCw,
   Search,
   Send,
   Settings,
   Square,
   Sun,
   Trash2,
+  Wallet,
   X,
   Zap,
 } from "lucide-react";
@@ -45,6 +47,7 @@ import ComposerTuningControls, {
 import type {
   AppSettings,
   AppState,
+  BalanceStatus,
   ChatMessage,
   ChatSession,
   ClaudeStatus,
@@ -93,6 +96,32 @@ function formatTokens(value: number): string {
     return `${(value / 1_000).toFixed(digits)}k`;
   }
   return String(Math.max(0, Math.round(value)));
+}
+
+function balanceDisplay(balance: BalanceStatus | null): string {
+  const entry = balance?.balances[0];
+  if (!balance) return "查询余额";
+  if (balance.status === "unsupported") return "暂不支持";
+  if (balance.status === "error") return "查询失败";
+  if (!balance.available) return "余额不可用";
+  if (!entry) return "暂无余额";
+  const prefix = entry.currency === "CNY" ? "¥" : entry.currency === "USD" ? "$" : `${entry.currency} `;
+  return `${prefix}${entry.total}`;
+}
+
+function balanceHint(balance: BalanceStatus | null): string {
+  if (!balance) return "正在读取当前供应商余额；每 10 秒自动查询一次。";
+  const entry = balance.balances[0];
+  if (balance.error) return `${balance.provider}：${balance.error} 点击手动刷新。`;
+  if (!entry) return `${balance.provider}：暂无可展示的余额。`;
+  const details = [
+    `总余额 ${entry.currency} ${entry.total}`,
+    entry.granted !== undefined ? `赠金 ${entry.granted}` : "",
+    entry.toppedUp !== undefined ? `充值 ${entry.toppedUp}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return `${balance.provider}：${details}。每 10 秒自动查询，点击可手动刷新。`;
 }
 
 function MessageView({ message }: { message: ChatMessage }) {
@@ -474,6 +503,8 @@ export default function App() {
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
+  const [balance, setBalance] = useState<BalanceStatus | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
   const [toast, setToast] = useState<string>("");
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -517,6 +548,24 @@ export default function App() {
     window.setTimeout(() => setToast(""), 4_500);
   };
 
+  const refreshBalance = async () => {
+    setBalanceLoading(true);
+    try {
+      setBalance(await window.claudeUI.queryBalance());
+    } catch {
+      setBalance({
+        status: "error",
+        provider: "当前供应商",
+        available: false,
+        balances: [],
+        checkedAt: new Date().toISOString(),
+        error: "余额查询服务不可用。",
+      });
+    } finally {
+      setBalanceLoading(false);
+    }
+  };
+
   useEffect(() => {
     let dispose = () => {};
     void window.claudeUI
@@ -534,6 +583,12 @@ export default function App() {
     dispose = window.claudeUI.onStateChanged((next) => setState(next));
     void window.claudeUI.claudeStatus().then(setClaudeStatus).catch(reportError);
     return () => dispose();
+  }, []);
+
+  useEffect(() => {
+    void refreshBalance();
+    const timer = window.setInterval(() => void refreshBalance(), 10_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -967,6 +1022,21 @@ export default function App() {
                 )}
               </div>
               <div className="composer-actions">
+                <button
+                  type="button"
+                  className={`balance-button balance-${balance?.status ?? "loading"}`}
+                  onClick={() => void refreshBalance()}
+                  disabled={balanceLoading}
+                  title={balanceHint(balance)}
+                  aria-label="手动查询余额"
+                >
+                  <Wallet size={14} />
+                  <span className="balance-copy">
+                    <strong>余额 {balanceDisplay(balance)}</strong>
+                    <small>{balance?.provider || "余额查询"} · 10 秒自动</small>
+                  </span>
+                  <RefreshCw size={12} className={balanceLoading ? "spin" : ""} />
+                </button>
                 {selected && (
                   <div
                     className={`context-meter ${contextTone}`}

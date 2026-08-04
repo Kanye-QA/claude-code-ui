@@ -80,6 +80,22 @@ export interface ClaudeStatus {
   error?: string;
 }
 
+export interface BalanceEntry {
+  currency: string;
+  total: string;
+  granted?: string;
+  toppedUp?: string;
+}
+
+export interface BalanceStatus {
+  status: "ok" | "unavailable" | "unsupported" | "error";
+  provider: string;
+  available: boolean;
+  balances: BalanceEntry[];
+  checkedAt: string;
+  error?: string;
+}
+
 export interface ClaudeUIApi {
   getState(): Promise<AppState>;
   createProject(input: Pick<Project, "name" | "cwd">): Promise<Project>;
@@ -96,6 +112,7 @@ export interface ClaudeUIApi {
   openPath(path: string): Promise<string>;
   openExternal(url: string): Promise<boolean>;
   claudeStatus(): Promise<ClaudeStatus>;
+  queryBalance(): Promise<BalanceStatus>;
   onStateChanged(callback: (state: AppState) => void): () => void;
 }
 
