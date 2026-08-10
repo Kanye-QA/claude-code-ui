@@ -366,6 +366,63 @@ summary:focus-visible {
   color: var(--accent-strong);
 }
 
+.project-heading-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+}
+
+.project-rename-button {
+  color: color-mix(in srgb, var(--text-muted) 80%, transparent);
+}
+
+.project-rename {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+}
+
+.project-rename > svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.project-rename input {
+  min-width: 0;
+  height: 24px;
+  flex: 1;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-radius: 6px;
+  outline: 0;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 10px;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.project-rename button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.project-rename button:hover {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .project-empty {
   display: flex;
   width: calc(100% - 16px);
@@ -749,8 +806,16 @@ summary:focus-visible {
   justify-content: flex-end;
 }
 
-.user-bubble {
+.user-message-stack {
+  display: flex;
   max-width: min(78%, 680px);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.user-bubble {
+  max-width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 15px 15px 4px 15px;
@@ -759,6 +824,25 @@ summary:focus-visible {
   font-size: 13px;
   line-height: 1.62;
   white-space: pre-wrap;
+}
+
+.queued-message .user-bubble {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-strong));
+}
+
+.queued-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-strong);
+  font-size: 8.5px;
+}
+
+.stopped-note {
+  max-width: 100%;
+  color: var(--text-muted);
+  text-align: right;
 }
 
 .assistant-message {
@@ -788,6 +872,42 @@ summary:focus-visible {
   min-width: 0;
   flex: 1;
   padding-top: 2px;
+}
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.user-message-actions {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+.message-actions button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 8.5px;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.message-actions button:hover {
+  border-color: var(--border-soft);
+  background: var(--surface-hover);
+  color: var(--text-soft);
+  opacity: 1;
 }
 
 .reasoning {
@@ -1494,6 +1614,69 @@ summary:focus-visible {
   text-overflow: ellipsis;
 }
 
+.model-brand-icon {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: currentColor;
+  line-height: 1;
+}
+
+.tuning-trigger > .model-brand-icon {
+  min-width: 15px;
+  overflow: visible;
+}
+
+.model-brand-follow {
+  color: var(--yellow);
+}
+
+.model-brand-anthropic {
+  color: #d97757;
+}
+
+.model-brand-openai {
+  color: #10a37f;
+}
+
+.model-brand-xai {
+  color: var(--text-soft);
+}
+
+.model-brand-xiaomi {
+  color: #ff6900;
+}
+
+.model-brand-kimi {
+  color: #027aff;
+}
+
+.model-brand-icon img,
+.model-brand-mask {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.model-brand-icon img {
+  object-fit: contain;
+}
+
+.model-brand-mask {
+  background: currentColor;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.model-brand-custom {
+  color: var(--text-muted);
+}
+
 .tuning-trigger:hover,
 .tuning-trigger.is-open {
   border-color: color-mix(in srgb, var(--border) 78%, transparent);
@@ -1552,6 +1735,8 @@ summary:focus-visible {
 
 .model-popover {
   left: -4px;
+  width: 388px;
+  max-width: min(388px, calc(100vw - 34px));
 }
 
 .effort-popover {
@@ -1674,6 +1859,57 @@ summary:focus-visible {
   opacity: 0.28;
 }
 
+.model-search-row {
+  display: flex;
+  height: 35px;
+  align-items: center;
+  gap: 7px;
+  margin: 0 10px 7px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 54%, transparent);
+  color: var(--text-muted);
+}
+
+.model-search-row:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  color: var(--accent-strong);
+}
+
+.model-search-row input {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 9.5px;
+}
+
+.model-search-row input::placeholder {
+  color: var(--text-muted);
+}
+
+.model-search-row button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.model-search-row button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
 .tuning-section-label {
   padding: 4px 13px 5px;
   color: var(--text-muted);
@@ -1689,6 +1925,53 @@ summary:focus-visible {
   overflow-y: auto;
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
+}
+
+.model-catalog-list {
+  max-height: 360px;
+  padding: 0 7px 7px;
+}
+
+.model-provider-group + .model-provider-group {
+  margin-top: 4px;
+}
+
+.model-provider-heading {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--surface) 96%, var(--panel));
+  color: var(--text-muted);
+  font-size: 8.5px;
+  font-weight: 650;
+}
+
+.model-provider-heading span:nth-child(2) {
+  flex: 1;
+}
+
+.model-provider-heading small {
+  min-width: 20px;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: var(--surface-strong);
+  color: var(--text-muted);
+  font-size: 7.5px;
+  text-align: center;
+}
+
+.model-search-empty {
+  padding: 26px 18px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .tuning-option {
@@ -1734,6 +2017,10 @@ summary:focus-visible {
   border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+.model-option-mark .model-brand-icon {
+  overflow: visible;
 }
 
 .permission-option-list {
@@ -1911,6 +2198,10 @@ summary:focus-visible {
   color: var(--yellow);
 }
 
+.model-catalog-note svg {
+  color: var(--accent-strong);
+}
+
 @keyframes tuning-popover-in {
   from {
     opacity: 0;
@@ -2025,36 +2316,82 @@ summary:focus-visible {
 .context-meter {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  height: 31px;
+  padding: 0 6px 0 4px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 46%, transparent);
   color: var(--text-muted);
-  font-size: 9px;
   white-space: nowrap;
 }
 
-.context-track {
-  display: block;
-  width: 48px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: var(--border-soft);
+.context-orb {
+  position: relative;
+  display: grid;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  place-items: center;
 }
 
-.context-track i {
-  display: block;
-  min-width: 1px;
+.context-orb svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
   height: 100%;
-  border-radius: inherit;
-  background: var(--green);
-  transition: width 180ms ease;
+  overflow: visible;
+  transform: rotate(-90deg);
 }
 
-.context-warning .context-track i {
-  background: var(--yellow);
+.context-orb circle {
+  fill: none;
+  stroke-width: 2.4;
 }
 
-.context-danger .context-track i {
-  background: var(--red);
+.context-ring-base {
+  stroke: var(--border-soft);
+}
+
+.context-ring-value {
+  stroke: var(--green);
+  stroke-dasharray: 100;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 220ms ease, stroke 180ms ease;
+}
+
+.context-warning .context-ring-value {
+  stroke: var(--yellow);
+}
+
+.context-danger .context-ring-value {
+  stroke: var(--red);
+}
+
+.context-orb em {
+  position: relative;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.context-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.05;
+}
+
+.context-copy strong {
+  color: var(--text-soft);
+  font-size: 8.5px;
+  font-weight: 650;
+}
+
+.context-copy small {
+  color: var(--text-muted);
+  font-size: 7px;
 }
 
 .send-button {
@@ -2084,6 +2421,71 @@ summary:focus-visible {
 .stop-button {
   background: var(--accent);
   color: #fff;
+}
+
+.queue-button {
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.composer-context-menu {
+  position: fixed;
+  z-index: 80;
+  width: 170px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, var(--accent) 12%);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface) 96%, var(--panel));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  animation: context-menu-in 100ms ease-out;
+}
+
+.composer-context-menu button {
+  display: grid;
+  width: 100%;
+  height: 33px;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-context-menu button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.composer-context-menu button:disabled {
+  cursor: default;
+  opacity: 0.34;
+}
+
+.composer-context-menu kbd {
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 8px;
+}
+
+.context-menu-separator {
+  display: block;
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}
+
+@keyframes context-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
 }
 
 .composer-caption {
@@ -2626,7 +3028,7 @@ summary:focus-visible {
     display: none;
   }
 
-  .context-meter > span:first-child {
+  .context-copy {
     display: none;
   }
 

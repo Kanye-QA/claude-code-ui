@@ -1,6 +1,6 @@
 {
   "name": "claude-code-ui",
-  "version": "3.1.0",
+  "version": "4.0.0",
   "private": true,
   "description": "A local desktop chat interface for Claude Code that reuses the current CC Switch configuration.",
   "author": "Kanye-QA",
@@ -46,11 +46,13 @@
     "appId": "local.claudecode.ui",
     "productName": "Claude Code UI",
     "electronDist": "node_modules/electron/dist",
-    "artifactName": "Claude-Code-UI-3.1-portable.${ext}",
+    "artifactName": "Claude-Code-UI-4.0-portable.${ext}",
     "asar": true,
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
       "package.json"
     ],
     "directories": {

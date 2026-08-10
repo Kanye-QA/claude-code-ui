@@ -1,6 +1,6 @@
 export type PermissionMode = "plan" | "auto" | "acceptEdits" | "dontAsk";
 export type EffortLevel = "" | "low" | "medium" | "high" | "xhigh" | "max";
-export type MessageStatus = "streaming" | "complete" | "error" | "stopped";
+export type MessageStatus = "queued" | "streaming" | "complete" | "error" | "stopped";
 
 export interface ContextUsage {
   inputTokens: number;
@@ -96,16 +96,24 @@ export interface BalanceStatus {
   error?: string;
 }
 
+export interface ModelCatalogEntry {
+  id: string;
+  name: string;
+  provider: string;
+}
+
 export interface ClaudeUIApi {
   getState(): Promise<AppState>;
+  getModelCatalog(): Promise<ModelCatalogEntry[]>;
   createProject(input: Pick<Project, "name" | "cwd">): Promise<Project>;
+  updateProject(id: string, patch: Partial<Project>): Promise<Project>;
   createSession(input?: Partial<ChatSession>): Promise<ChatSession>;
   updateSession(id: string, patch: Partial<ChatSession>): Promise<ChatSession>;
   deleteSession(id: string): Promise<boolean>;
   sendMessage(
     id: string,
     prompt: string,
-  ): Promise<{ userMessageId: string; assistantMessageId: string }>;
+  ): Promise<{ userMessageId: string; assistantMessageId?: string; queued: boolean }>;
   stopMessage(id: string): Promise<boolean>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   selectDirectory(initialPath?: string): Promise<string | null>;
@@ -113,6 +121,8 @@ export interface ClaudeUIApi {
   openExternal(url: string): Promise<boolean>;
   claudeStatus(): Promise<ClaudeStatus>;
   queryBalance(): Promise<BalanceStatus>;
+  readClipboard(): Promise<string>;
+  writeClipboard(text: string): Promise<boolean>;
   onStateChanged(callback: (state: AppState) => void): () => void;
 }
 

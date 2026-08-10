@@ -4,12 +4,25 @@ import {
   ChevronDown,
   Code2,
   Gauge,
+  Info,
+  Search,
   ShieldCheck,
-  Sparkles,
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChatSession, EffortLevel, PermissionMode } from "../types";
+import type {
+  ChatSession,
+  EffortLevel,
+  ModelCatalogEntry,
+  PermissionMode,
+} from "../types";
+import ModelBrandIcon, {
+  modelDefinitions,
+  modelIconKind,
+  modelLabel,
+  modelProviderLabel,
+  type ModelIconKind,
+} from "./ModelBrandIcon";
 
 export const modeInfo: Record<
   PermissionMode,
@@ -79,52 +92,21 @@ export const effortInfo: Record<
   },
 };
 
-export const commonModels = [
-  {
-    value: "",
-    label: "跟随 CC Switch",
-    description: "使用 CC Switch 当前供应商的默认模型",
-  },
-  {
-    value: "sonnet",
-    label: "Claude Sonnet",
-    description: "均衡的编码与推理能力",
-  },
-  {
-    value: "opus",
-    label: "Claude Opus",
-    description: "复杂任务与深度分析",
-  },
-  {
-    value: "haiku",
-    label: "Claude Haiku",
-    description: "轻量、快速的日常任务",
-  },
-  {
-    value: "fable",
-    label: "Claude Fable",
-    description: "Claude Code 兼容模型别名",
-  },
-  {
-    value: "deepseek-v4-pro",
-    label: "DeepSeek V4 Pro",
-    description: "常用的第三方供应商模型 ID",
-  },
-];
+export const commonModels = modelDefinitions;
 
 type OpenMenu = "model" | "effort" | "permission" | null;
 const effortOrder = Object.keys(effortInfo) as EffortLevel[];
 
 interface ComposerTuningControlsProps {
   session: ChatSession;
+  modelCatalog: ModelCatalogEntry[];
   disabled: boolean;
   onUpdate: (patch: Partial<ChatSession>) => Promise<void>;
 }
 
 function displayModel(session: ChatSession): string {
   const requested = (session.requestedModel ?? "").trim();
-  if (!requested) return "跟随 CC Switch";
-  return commonModels.find((option) => option.value === requested)?.label ?? requested;
+  return modelLabel(requested);
 }
 
 function EffortGlyph({ level }: { level: number }) {
@@ -139,28 +121,85 @@ function EffortGlyph({ level }: { level: number }) {
 
 export default function ComposerTuningControls({
   session,
+  modelCatalog,
   disabled,
   onUpdate,
 }: ComposerTuningControlsProps) {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [modelDraft, setModelDraft] = useState(session.requestedModel ?? "");
+  const [modelSearch, setModelSearch] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
-  const modelInputRef = useRef<HTMLInputElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
 
   const modelOptions = useMemo(() => {
-    const options = [...commonModels];
+    const options = new Map<
+      string,
+      { value: string; label: string; description: string; provider: ModelIconKind }
+    >();
+    for (const option of commonModels) {
+      options.set(option.value, { ...option, provider: option.kind });
+    }
+    for (const model of modelCatalog) {
+      options.set(model.id, {
+        value: model.id,
+        label: model.name,
+        description: model.id,
+        provider: modelIconKind(model.id, model.provider),
+      });
+    }
     for (const value of [session.requestedModel, session.activeModel]) {
-      if (value && !options.some((option) => option.value === value)) {
-        options.push({
+      if (value && !options.has(value)) {
+        options.set(value, {
           value,
           label: value,
           description:
             value === session.activeModel ? "当前实际运行模型" : "当前会话自定义模型",
+          provider: modelIconKind(value),
         });
       }
     }
-    return options;
-  }, [session.activeModel, session.requestedModel]);
+    return [...options.values()];
+  }, [modelCatalog, session.activeModel, session.requestedModel]);
+
+  const groupedModelOptions = useMemo(() => {
+    const query = modelSearch.trim().toLowerCase();
+    const groups = new Map<ModelIconKind, typeof modelOptions>();
+    for (const option of modelOptions) {
+      const providerLabel = modelProviderLabel(option.provider);
+      if (
+        query &&
+        !`${option.label} ${option.value} ${providerLabel}`.toLowerCase().includes(query)
+      ) {
+        continue;
+      }
+      const group = groups.get(option.provider) ?? [];
+      group.push(option);
+      groups.set(option.provider, group);
+    }
+    const order: ModelIconKind[] = [
+      "follow",
+      "anthropic",
+      "deepseek",
+      "openai",
+      "gemini",
+      "qwen",
+      "zhipu",
+      "kimi",
+      "minimax",
+      "doubao",
+      "mistral",
+      "cohere",
+      "xai",
+      "hunyuan",
+      "xiaomi",
+      "stepfun",
+      "custom",
+    ];
+    return order.flatMap((provider) => {
+      const options = groups.get(provider);
+      return options?.length ? [{ provider, options }] : [];
+    });
+  }, [modelOptions, modelSearch]);
 
   useEffect(() => {
     if (!openMenu) setModelDraft(session.requestedModel ?? "");
@@ -195,7 +234,8 @@ export default function ComposerTuningControls({
       const next = current === menu ? null : menu;
       if (next === "model") {
         setModelDraft(session.requestedModel ?? "");
-        requestAnimationFrame(() => modelInputRef.current?.focus());
+        setModelSearch("");
+        requestAnimationFrame(() => modelSearchRef.current?.focus());
       }
       return next;
     });
@@ -242,7 +282,11 @@ export default function ComposerTuningControls({
           aria-controls="composer-model-picker"
           title="选择当前会话使用的模型"
         >
-          <Bot size={15} />
+          <ModelBrandIcon
+            model={session.requestedModel}
+            provider={modelCatalog.find((model) => model.id === session.requestedModel)?.provider}
+            size={15}
+          />
           <span>{displayModel(session)}</span>
           <ChevronDown size={13} className="trigger-chevron" />
         </button>
@@ -260,14 +304,17 @@ export default function ComposerTuningControls({
               </span>
               <span>
                 <strong>选择模型</strong>
-                <small>只影响当前会话，从下一条消息开始生效</small>
+                <small>
+                  {modelCatalog.length
+                    ? `已加载 CC Switch 兼容模型目录，共 ${modelCatalog.length} 个模型`
+                    : "可输入任意模型 ID；未检测到 CC Switch 模型库"}
+                </small>
               </span>
             </div>
 
             <div className="model-custom-row">
               <Bot size={14} />
               <input
-                ref={modelInputRef}
                 value={modelDraft}
                 onChange={(event) => setModelDraft(event.target.value)}
                 onKeyDown={(event) => {
@@ -276,7 +323,7 @@ export default function ComposerTuningControls({
                     void applyCustomModel();
                   }
                 }}
-                placeholder="输入任意模型 ID，例如 deepseek-v4-pro"
+                placeholder="输入任意模型 ID，例如 deepseek-v4-flash"
                 aria-label="自定义模型 ID"
               />
               <button
@@ -288,36 +335,80 @@ export default function ComposerTuningControls({
               </button>
             </div>
 
-            <div className="tuning-section-label">常用模型</div>
-            <div className="tuning-option-list" role="listbox" aria-label="常用模型">
-              {modelOptions.map((option) => {
-                const selected = session.requestedModel === option.value;
-                return (
-                  <button
-                    type="button"
-                    className={`tuning-option model-option ${selected ? "selected" : ""}`}
-                    key={option.value || "follow"}
-                    data-value={option.value}
-                    onClick={() => void chooseModel(option.value)}
-                    role="option"
-                    aria-selected={selected}
-                  >
-                    <span className="model-option-mark">
-                      {option.value ? <Sparkles size={15} /> : <Zap size={15} />}
-                    </span>
-                    <span className="tuning-option-copy">
-                      <strong>{option.label}</strong>
-                      <small>{option.description}</small>
-                    </span>
-                    {selected && <Check size={16} className="option-check" />}
-                  </button>
-                );
-              })}
+            <label className="model-search-row">
+              <Search size={14} />
+              <input
+                ref={modelSearchRef}
+                value={modelSearch}
+                onChange={(event) => setModelSearch(event.target.value)}
+                placeholder="搜索模型名称、ID 或供应商"
+                aria-label="搜索 CC Switch 模型"
+              />
+              {modelSearch && (
+                <button type="button" onClick={() => setModelSearch("")} aria-label="清空搜索">
+                  ×
+                </button>
+              )}
+            </label>
+
+            <div className="tuning-section-label">
+              全部可选模型 · {modelOptions.length}（含快捷项）
+            </div>
+            <div className="tuning-option-list model-catalog-list" role="listbox" aria-label="CC Switch 模型库">
+              {groupedModelOptions.map((group) => (
+                <section className="model-provider-group" key={group.provider}>
+                  <div className="model-provider-heading">
+                    <ModelBrandIcon provider={group.provider} size={13} />
+                    <span>{modelProviderLabel(group.provider)}</span>
+                    <small>{group.options.length}</small>
+                  </div>
+                  {group.options.map((option) => {
+                    const selected = session.requestedModel === option.value;
+                    return (
+                      <button
+                        type="button"
+                        className={`tuning-option model-option ${selected ? "selected" : ""}`}
+                        key={option.value || "follow"}
+                        data-value={option.value}
+                        onClick={() => void chooseModel(option.value)}
+                        role="option"
+                        aria-selected={selected}
+                      >
+                        <span className="model-option-mark">
+                          <ModelBrandIcon
+                            model={option.value}
+                            provider={option.provider}
+                            size={16}
+                          />
+                        </span>
+                        <span className="tuning-option-copy">
+                          <strong>{option.label}</strong>
+                          <small>{option.description}</small>
+                        </span>
+                        {selected && <Check size={16} className="option-check" />}
+                      </button>
+                    );
+                  })}
+                </section>
+              ))}
+              {!groupedModelOptions.length && (
+                <div className="model-search-empty">没有匹配的模型；也可以在上方直接输入模型 ID。</div>
+              )}
+            </div>
+
+            <div className="tuning-popover-note model-catalog-note">
+              <Info size={13} />
+              名称与图标来自 CC Switch；是否可调用由当前供应商决定。
             </div>
 
             <div className="tuning-popover-footer">
               <span>实际运行</span>
-              <strong>{session.activeModel || "等待首次回复"}</strong>
+              <strong>
+                {session.activeModel
+                  ? modelCatalog.find((model) => model.id === session.activeModel)?.name ??
+                    modelLabel(session.activeModel)
+                  : "等待下次回复确认"}
+              </strong>
             </div>
           </div>
         )}

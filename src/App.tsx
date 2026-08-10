@@ -1,9 +1,11 @@
 import {
-  Bot,
   Check,
   ChevronDown,
   CircleAlert,
+  ClipboardPaste,
   Clock3,
+  Copy,
+  CornerDownRight,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -21,6 +23,7 @@ import {
   Settings,
   Square,
   Sun,
+  TextSelect,
   Trash2,
   Wallet,
   X,
@@ -33,6 +36,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import MarkdownMessage from "./components/MarkdownMessage";
 import ToolCard from "./components/ToolCard";
@@ -44,6 +48,7 @@ import ComposerTuningControls, {
   effortInfo,
   modeInfo,
 } from "./components/ComposerTuningControls";
+import ModelBrandIcon, { modelLabel } from "./components/ModelBrandIcon";
 import type {
   AppSettings,
   AppState,
@@ -52,6 +57,7 @@ import type {
   ChatSession,
   ClaudeStatus,
   EffortLevel,
+  ModelCatalogEntry,
   PermissionMode,
   Project,
 } from "./types";
@@ -85,8 +91,12 @@ function relativeTime(value: string): string {
   );
 }
 
-function displayModel(session?: ChatSession): string {
-  return session?.requestedModel || session?.activeModel || "跟随 CC Switch";
+function displayModel(
+  session?: ChatSession,
+  modelCatalog: ModelCatalogEntry[] = [],
+): string {
+  const value = session?.requestedModel || session?.activeModel;
+  return modelCatalog.find((model) => model.id === value)?.name ?? modelLabel(value);
 }
 
 function formatTokens(value: number): string {
@@ -125,10 +135,40 @@ function balanceHint(balance: BalanceStatus | null): string {
 }
 
 function MessageView({ message }: { message: ChatMessage }) {
+  const [copied, setCopied] = useState(false);
+  const copyMessage = async () => {
+    if (!message.content) return;
+    await window.claudeUI.writeClipboard(message.content);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  };
+
   if (message.role === "user") {
     return (
-      <article className="message user-message">
-        <div className="user-bubble">{message.content}</div>
+      <article className={`message user-message ${message.status === "queued" ? "queued-message" : ""}`}>
+        <div className="user-message-stack">
+          <div className="user-bubble">{message.content}</div>
+          {message.status === "queued" && (
+            <div className="queued-note">
+              <Clock3 size={11} /> 等待当前任务完成后自动发送
+            </div>
+          )}
+          {message.status === "stopped" && message.error && (
+            <div className="queued-note stopped-note">
+              <CircleAlert size={11} /> {message.error}
+            </div>
+          )}
+          <div className="message-actions user-message-actions">
+            <button
+              type="button"
+              onClick={() => void copyMessage()}
+              title={copied ? "已复制" : "复制消息"}
+              aria-label={copied ? "已复制" : "复制消息"}
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          </div>
+        </div>
       </article>
     );
   }
@@ -182,6 +222,18 @@ function MessageView({ message }: { message: ChatMessage }) {
             {message.costUsd !== undefined && <span>${message.costUsd.toFixed(4)}</span>}
           </div>
         )}
+        {message.content && (
+          <div className="message-actions">
+            <button
+              type="button"
+              onClick={() => void copyMessage()}
+              title={copied ? "已复制" : "复制回答"}
+              aria-label={copied ? "已复制" : "复制回答"}
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          </div>
+        )}
       </div>
     </article>
   );
@@ -189,12 +241,19 @@ function MessageView({ message }: { message: ChatMessage }) {
 
 interface SettingsPanelProps {
   state: AppState;
+  modelCatalog: ModelCatalogEntry[];
   claudeStatus: ClaudeStatus | null;
   onClose(): void;
   onUpdate(patch: Partial<AppSettings>): Promise<void>;
 }
 
-function SettingsPanel({ state, claudeStatus, onClose, onUpdate }: SettingsPanelProps) {
+function SettingsPanel({
+  state,
+  modelCatalog,
+  claudeStatus,
+  onClose,
+  onUpdate,
+}: SettingsPanelProps) {
   const [model, setModel] = useState(state.settings.requestedModel);
   const [claudePath, setClaudePath] = useState(state.settings.claudePath);
 
@@ -291,13 +350,16 @@ function SettingsPanel({ state, claudeStatus, onClose, onUpdate }: SettingsPanel
               <button onClick={() => void onUpdate({ requestedModel: model })}>保存</button>
             </div>
             <datalist id="claude-model-options">
-              {commonModels
-                .filter((option) => option.value)
-                .map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
+              {commonModels.filter((option) => option.value).map((option) => (
+                <option key={`alias-${option.value}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+              {modelCatalog.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
             </datalist>
             <p>建议留空，这样切换 CC Switch 后无需修改这里。</p>
           </div>
@@ -502,7 +564,16 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [projectRenameDraft, setProjectRenameDraft] = useState("");
+  const [composerContextMenu, setComposerContextMenu] = useState<{
+    x: number;
+    y: number;
+    clipboardText: string;
+    selectionText: string;
+  } | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogEntry[]>([]);
   const [balance, setBalance] = useState<BalanceStatus | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [toast, setToast] = useState<string>("");
@@ -514,6 +585,11 @@ export default function App() {
     ? state.projects.find((project) => project.id === selected.projectId)
     : undefined;
   const active = selected ? state.activeSessionIds.includes(selected.id) : false;
+  const queuedCount = selected
+    ? selected.messages.filter(
+        (message) => message.role === "user" && message.status === "queued",
+      ).length
+    : 0;
   const projectGroups = useMemo(() => {
     const query = search.trim().toLowerCase();
     return state.projects
@@ -587,13 +663,15 @@ export default function App() {
       .catch(reportError);
     dispose = window.claudeUI.onStateChanged((next) => setState(next));
     void window.claudeUI.claudeStatus().then(setClaudeStatus).catch(reportError);
+    void window.claudeUI.getModelCatalog().then(setModelCatalog).catch(() => setModelCatalog([]));
     return () => dispose();
   }, []);
 
   useEffect(() => {
     void refreshBalance();
-    const timer = window.setInterval(() => void refreshBalance(), 10_000);
-    return () => window.clearInterval(timer);
+    const refreshOnFocus = () => void refreshBalance();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
   }, []);
 
   useEffect(() => {
@@ -628,6 +706,24 @@ export default function App() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 190)}px`;
   }, [draft]);
 
+  useEffect(() => {
+    if (!composerContextMenu) return;
+    const close = () => setComposerContextMenu(null);
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [composerContextMenu]);
+
   const createSession = async (project = selectedProject) => {
     if (!project) {
       setProjectDialogOpen(true);
@@ -653,6 +749,20 @@ export default function App() {
     } catch (error) {
       reportError(error);
       throw error;
+    }
+  };
+
+  const beginProjectRename = (project: Project) => {
+    setProjectRenameDraft(project.name);
+    setRenamingProjectId(project.id);
+  };
+
+  const saveProjectRename = async (projectId: string) => {
+    try {
+      await window.claudeUI.updateProject(projectId, { name: projectRenameDraft });
+      setRenamingProjectId(null);
+    } catch (error) {
+      reportError(error);
     }
   };
 
@@ -684,14 +794,72 @@ export default function App() {
   };
 
   const send = async () => {
-    if (!selected || active || !draft.trim()) return;
+    if (!selected || !draft.trim()) return;
     const prompt = draft;
+    setDraft("");
     try {
       await window.claudeUI.sendMessage(selected.id, prompt);
-      setDraft("");
     } catch (error) {
+      setDraft((current) => current || prompt);
       reportError(error);
     }
+  };
+
+  const openComposerContextMenu = async (event: ReactMouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    const x = Math.min(event.clientX, window.innerWidth - 178);
+    const y = Math.min(event.clientY, window.innerHeight - 142);
+    const textarea = event.currentTarget;
+    const selectionText = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
+    setComposerContextMenu({
+      x: Math.max(8, x),
+      y: Math.max(8, y),
+      clipboardText: "",
+      selectionText,
+    });
+    try {
+      const clipboardText = await window.claudeUI.readClipboard();
+      setComposerContextMenu((current) =>
+        current && current.x === Math.max(8, x) && current.y === Math.max(8, y)
+          ? { ...current, clipboardText }
+          : current,
+      );
+    } catch {
+      // Keep paste disabled when clipboard access is unavailable.
+    }
+  };
+
+  const copyComposerSelection = async () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const selectedText = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
+    if (selectedText) await window.claudeUI.writeClipboard(selectedText);
+    setComposerContextMenu(null);
+    textarea.focus();
+  };
+
+  const pasteIntoComposer = () => {
+    const textarea = textareaRef.current;
+    const pasteText = composerContextMenu?.clipboardText ?? "";
+    if (!textarea || !pasteText) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const nextDraft = `${draft.slice(0, start)}${pasteText}${draft.slice(end)}`;
+    const caret = start + pasteText.length;
+    setDraft(nextDraft);
+    setComposerContextMenu(null);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
+  };
+
+  const selectAllComposerText = () => {
+    setComposerContextMenu(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.select();
+    });
   };
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -750,11 +918,13 @@ export default function App() {
         setProjectDialogOpen(false);
       } else if (event.key === "Escape" && renamingSession) {
         setRenamingSession(null);
+      } else if (event.key === "Escape" && renamingProjectId) {
+        setRenamingProjectId(null);
       }
     };
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
-  }, [projectDialogOpen, renamingSession, settingsOpen, selectedProject]);
+  }, [projectDialogOpen, renamingProjectId, renamingSession, settingsOpen, selectedProject]);
 
   return (
     <div className={`app-shell ${sidebarOpen ? "sidebar-visible" : "sidebar-hidden"}`}>
@@ -796,18 +966,54 @@ export default function App() {
           {projectGroups.map(({ project, sessions }) => (
             <section className="project-group" key={project.id}>
               <header className="project-heading">
-                <span className="project-name" title={project.cwd}>
-                  <Folder size={14} />
-                  <strong>{project.name}</strong>
-                </span>
-                <button
-                  className="project-new-chat"
-                  onClick={() => void createSession(project)}
-                  title={`在“${project.name}”中新建会话`}
-                  aria-label={`在“${project.name}”中新建会话`}
-                >
-                  <Plus size={15} />
-                </button>
+                {renamingProjectId === project.id ? (
+                  <form
+                    className="project-rename"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void saveProjectRename(project.id);
+                    }}
+                  >
+                    <Folder size={14} />
+                    <input
+                      autoFocus
+                      value={projectRenameDraft}
+                      onChange={(event) => setProjectRenameDraft(event.target.value)}
+                      aria-label="项目名称"
+                    />
+                    <button type="submit" aria-label="保存项目名称">
+                      <Check size={13} />
+                    </button>
+                    <button type="button" onClick={() => setRenamingProjectId(null)} aria-label="取消">
+                      <X size={13} />
+                    </button>
+                  </form>
+                ) : (
+                  <span className="project-name" title={project.cwd}>
+                    <Folder size={14} />
+                    <strong>{project.name}</strong>
+                  </span>
+                )}
+                {renamingProjectId !== project.id && (
+                  <span className="project-heading-actions">
+                    <button
+                      className="project-new-chat project-rename-button"
+                      onClick={() => beginProjectRename(project)}
+                      title={`重命名“${project.name}”`}
+                      aria-label={`重命名项目：${project.name}`}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      className="project-new-chat"
+                      onClick={() => void createSession(project)}
+                      title={`在“${project.name}”中新建会话`}
+                      aria-label={`在“${project.name}”中新建会话`}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  </span>
+                )}
               </header>
               {sessions.length ? (
                 sessions.map((session) => (
@@ -934,8 +1140,8 @@ export default function App() {
             {selected && (
               <>
                 <div className="model-pill">
-                  <Bot size={14} />
-                  {displayModel(selected)}
+                  <ModelBrandIcon model={selected.requestedModel || selected.activeModel} size={14} />
+                  {displayModel(selected, modelCatalog)}
                 </div>
               </>
             )}
@@ -1001,10 +1207,15 @@ export default function App() {
             <textarea
               ref={textareaRef}
               value={draft}
-              disabled={!selected || active}
+              disabled={!selected}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onComposerKeyDown}
-              placeholder={active ? "Claude 正在处理…" : "给 Claude Code 发送消息"}
+              onContextMenu={(event) => void openComposerContextMenu(event)}
+              placeholder={
+                active
+                  ? "继续输入补充要求，当前任务完成后会自动发送…"
+                  : "给 Claude Code 发送消息"
+              }
               rows={1}
             />
             <div className="composer-toolbar">
@@ -1021,6 +1232,7 @@ export default function App() {
                 {selected && (
                   <ComposerTuningControls
                     session={selected}
+                    modelCatalog={modelCatalog}
                     disabled={active}
                     onUpdate={updateSession}
                   />
@@ -1047,29 +1259,54 @@ export default function App() {
                     className={`context-meter ${contextTone}`}
                     title={`当前上下文输入 ${formatTokens(contextInput)} Token${contextWindow ? `，窗口 ${formatTokens(contextWindow)}` : "，窗口上限等待模型返回"}；最近输出 ${formatTokens(selected.contextUsage.outputTokens)} Token`}
                   >
-                    <span>
-                      {contextWindow
-                        ? `上下文 ${Math.round(contextPercent)}%`
-                        : contextInput
-                          ? `上下文 ${formatTokens(contextInput)}`
-                          : "上下文 —"}
+                    <span className="context-orb" aria-hidden="true">
+                      <svg viewBox="0 0 36 36">
+                        <circle className="context-ring-base" cx="18" cy="18" r="14" pathLength="100" />
+                        <circle
+                          className="context-ring-value"
+                          cx="18"
+                          cy="18"
+                          r="14"
+                          pathLength="100"
+                          style={{ strokeDashoffset: 100 - contextPercent }}
+                        />
+                      </svg>
+                      <em>{contextWindow ? Math.round(contextPercent) : "—"}</em>
                     </span>
-                    {contextWindow > 0 && (
-                      <span className="context-track">
-                        <i style={{ width: `${contextPercent}%` }} />
-                      </span>
-                    )}
+                    <span className="context-copy">
+                      <strong>上下文</strong>
+                      <small>
+                        {contextWindow
+                          ? `${formatTokens(contextInput)} / ${formatTokens(contextWindow)}`
+                          : contextInput
+                            ? `${formatTokens(contextInput)} Token`
+                            : "等待统计"}
+                      </small>
+                    </span>
                   </div>
                 )}
                 {active && selected ? (
-                  <button
-                    className="send-button stop-button"
-                    onClick={() => void window.claudeUI.stopMessage(selected.id)}
-                    title="停止"
-                    aria-label="停止 Claude"
-                  >
-                    <Square size={14} fill="currentColor" />
-                  </button>
+                  <>
+                    <button
+                      className="send-button queue-button"
+                      onClick={() => void send()}
+                      disabled={!draft.trim()}
+                      title="加入后续队列 (Enter)"
+                      aria-label="加入后续队列"
+                    >
+                      <CornerDownRight size={16} />
+                    </button>
+                    <button
+                      className="send-button stop-button"
+                      onClick={() =>
+                        void window.claudeUI.stopMessage(selected.id).catch(reportError)
+                      }
+                      title="停止当前回复"
+                      aria-label="停止 Claude 当前回复"
+                    >
+                      <Square size={14} fill="currentColor" />
+                    </button>
+                  </>
                 ) : (
                   <button
                     className="send-button"
@@ -1085,14 +1322,59 @@ export default function App() {
             </div>
           </div>
           <div className="composer-caption">
-            Enter 发送 · Shift + Enter 换行 · 模型、强度和权限从下一条回复开始生效
+            {active
+              ? `当前回复进行中 · Enter 加入后续队列${queuedCount ? ` · 已排队 ${queuedCount} 条` : ""}`
+              : "Enter 发送 · Shift + Enter 换行 · 模型、强度和权限从下一条回复开始生效"}
           </div>
         </div>
       </main>
 
+      {composerContextMenu && (
+        <div
+          className="composer-context-menu"
+          role="menu"
+          aria-label="输入框编辑菜单"
+          style={{ left: composerContextMenu.x, top: composerContextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void copyComposerSelection()}
+            disabled={!composerContextMenu.selectionText}
+          >
+            <Copy size={14} />
+            <span>复制</span>
+            <kbd>Ctrl C</kbd>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={pasteIntoComposer}
+            disabled={!composerContextMenu.clipboardText}
+          >
+            <ClipboardPaste size={14} />
+            <span>粘贴</span>
+            <kbd>Ctrl V</kbd>
+          </button>
+          <span className="context-menu-separator" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={selectAllComposerText}
+            disabled={!draft}
+          >
+            <TextSelect size={14} />
+            <span>全选</span>
+            <kbd>Ctrl A</kbd>
+          </button>
+        </div>
+      )}
+
       {settingsOpen && (
         <SettingsPanel
           state={state}
+          modelCatalog={modelCatalog}
           claudeStatus={claudeStatus}
           onClose={() => setSettingsOpen(false)}
           onUpdate={updateSettings}

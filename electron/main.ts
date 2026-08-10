@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   nativeTheme,
@@ -9,17 +10,22 @@ import {
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { bundledModelCatalog } from "./bundledModelCatalog";
 
 type PermissionMode = "plan" | "auto" | "acceptEdits" | "dontAsk";
 type EffortLevel = "" | "low" | "medium" | "high" | "xhigh" | "max";
-type MessageStatus = "streaming" | "complete" | "error" | "stopped";
+type MessageStatus = "queued" | "streaming" | "complete" | "error" | "stopped";
 type ToolStatus = "running" | "success" | "error";
 
 interface ContextUsage {
@@ -103,8 +109,14 @@ interface BalanceStatus {
   error?: string;
 }
 
+interface ModelCatalogEntry {
+  id: string;
+  name: string;
+  provider: string;
+}
+
 interface AppStore {
-  version: 2;
+  version: 3;
   projects: Project[];
   sessions: ChatSession[];
   settings: AppSettings;
@@ -126,6 +138,9 @@ const activeJobs = new Map<string, ActiveJob>();
 const syncTimers = new Map<string, NodeJS.Timeout>();
 let saveTimer: NodeJS.Timeout | null = null;
 const previewMode = process.env.CLAUDE_UI_MOCK === "1";
+const LEGACY_DEEPSEEK_MODEL = "deepseek-v4-pro";
+const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
+const MAX_QUEUED_MESSAGES = 20;
 
 const effortLevels: EffortLevel[] = ["", "low", "medium", "high", "xhigh", "max"];
 
@@ -143,6 +158,14 @@ function isDirectory(path: string): boolean {
 
 function isEffortLevel(value: unknown): value is EffortLevel {
   return typeof value === "string" && effortLevels.includes(value as EffortLevel);
+}
+
+function migrateModel(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed.toLowerCase() === LEGACY_DEEPSEEK_MODEL
+    ? DEFAULT_DEEPSEEK_MODEL
+    : trimmed;
 }
 
 function emptyContextUsage(): ContextUsage {
@@ -178,7 +201,7 @@ function normalizeContextUsage(value: unknown): ContextUsage {
 function defaultStore(): AppStore {
   const documents = app.getPath("documents");
   const base: AppStore = {
-    version: 2,
+    version: 3,
     projects: [],
     sessions: [],
     settings: {
@@ -208,17 +231,43 @@ function defaultStore(): AppStore {
       {
         id: "preview-conversation-a",
         projectId: project.id,
-        title: "1.0 版本优化规划",
+        title: "4.0 工作台体验升级",
         titleEdited: true,
         cwd: project.cwd,
         createdAt: timestamp,
         updatedAt: timestamp,
-        started: false,
+        started: true,
         permissionMode: "auto",
         effort: "",
-        contextUsage: emptyContextUsage(),
+        requestedModel: DEFAULT_DEEPSEEK_MODEL,
+        activeModel: DEFAULT_DEEPSEEK_MODEL,
+        contextUsage: {
+          inputTokens: 61_420,
+          outputTokens: 3_280,
+          cacheCreationInputTokens: 8_100,
+          cacheReadInputTokens: 12_600,
+          contextWindowTokens: 200_000,
+        },
         status: "idle",
-        messages: [],
+        messages: [
+          {
+            id: "preview-user-message",
+            role: "user",
+            content: "把工作台的上下文状态、模型图标和消息操作统一优化。",
+            createdAt: timestamp,
+            status: "complete",
+          },
+          {
+            id: "preview-assistant-message",
+            role: "assistant",
+            content:
+              "已完成第一轮界面整理。现在上下文改为轻量环形状态，消息下方可直接复制，输入区也支持右键编辑菜单。",
+            createdAt: timestamp,
+            status: "complete",
+            toolCalls: [],
+            durationMs: 2_840,
+          },
+        ],
       },
       {
         id: "preview-conversation-b",
@@ -260,6 +309,20 @@ function projectById(id: string): Project {
   return project;
 }
 
+function preserveUnusableStore(): void {
+  if (!storePath || !existsSync(storePath)) return;
+  const recoveryName = `sessions.recovery-${new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")}.json`;
+  try {
+    copyFileSync(storePath, join(dirname(storePath), recoveryName));
+  } catch {
+    // If even the recovery copy cannot be created, write the fresh store to a
+    // different file so the unreadable original is never overwritten.
+    storePath = join(dirname(storePath), `sessions-recovered-${Date.now()}.json`);
+  }
+}
+
 function loadStore(): AppStore {
   storePath = join(app.getPath("userData"), "sessions.json");
   try {
@@ -270,11 +333,13 @@ function loadStore(): AppStore {
       version: number;
       projects?: Project[];
     };
-    if ((parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.sessions)) {
+    if (![1, 2, 3].includes(parsed.version) || !Array.isArray(parsed.sessions)) {
+      preserveUnusableStore();
       return defaultStore();
     }
     const defaults = defaultStore();
     parsed.settings = { ...defaults.settings, ...parsed.settings };
+    parsed.settings.requestedModel = migrateModel(parsed.settings.requestedModel);
     const projects = Array.isArray(parsed.projects)
       ? parsed.projects
           .filter(
@@ -312,18 +377,31 @@ function loadStore(): AppStore {
       effort: isEffortLevel(session.effort)
         ? session.effort
         : parsed.settings.defaultEffort,
+      requestedModel: migrateModel(session.requestedModel),
+      activeModel:
+        session.activeModel?.trim().toLowerCase() === LEGACY_DEEPSEEK_MODEL
+          ? undefined
+          : session.activeModel,
       contextUsage: normalizeContextUsage(session.contextUsage),
       messages: Array.isArray(session.messages)
         ? session.messages.map((message) =>
-            message.status === "streaming"
-              ? { ...message, status: "stopped" as MessageStatus }
+            message.status === "streaming" || message.status === "queued"
+              ? {
+                  ...message,
+                  status: "stopped" as MessageStatus,
+                  error:
+                    message.status === "queued"
+                      ? "应用关闭前尚未发送。"
+                      : message.error,
+                }
               : message,
           )
         : [],
       };
     });
-    return { ...parsed, version: 2, projects };
+    return { ...parsed, version: 3, projects };
   } catch {
+    preserveUnusableStore();
     return defaultStore();
   }
 }
@@ -331,7 +409,21 @@ function loadStore(): AppStore {
 function saveStoreNow(): void {
   if (!storePath) return;
   mkdirSync(dirname(storePath), { recursive: true });
-  writeFileSync(storePath, JSON.stringify(store, null, 2), "utf8");
+  const temporaryPath = `${storePath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporaryPath, JSON.stringify(store, null, 2), "utf8");
+    if (existsSync(storePath)) copyFileSync(storePath, `${storePath}.bak`);
+    renameSync(temporaryPath, storePath);
+  } catch (error) {
+    if (existsSync(temporaryPath)) {
+      try {
+        unlinkSync(temporaryPath);
+      } catch {
+        // Keep the original save error as the useful diagnostic.
+      }
+    }
+    console.error("Unable to save Claude Code UI state safely:", error);
+  }
 }
 
 function scheduleSave(): void {
@@ -411,6 +503,73 @@ function resolveClaudeExecutable(): string {
   return match ?? "claude";
 }
 
+function resolveClaudeConfigDirectory(): string {
+  const configured = process.env.CLAUDE_CONFIG_DIR?.trim();
+  return configured ? resolve(configured) : join(app.getPath("home"), ".claude");
+}
+
+function modelProvider(modelId: string, displayName: string): string {
+  const value = `${modelId} ${displayName}`.toLowerCase();
+  if (value.includes("claude")) return "anthropic";
+  if (value.includes("deepseek")) return "deepseek";
+  if (/\b(?:gpt|codex|openai|o[134](?:-|\b))/.test(value)) return "openai";
+  if (value.includes("gemini")) return "gemini";
+  if (value.includes("qwen") || value.includes("qwq")) return "qwen";
+  if (value.includes("glm")) return "zhipu";
+  if (value.includes("kimi") || /^k[23]\b/.test(value)) return "kimi";
+  if (value.includes("minimax")) return "minimax";
+  if (value.includes("doubao")) return "doubao";
+  if (
+    value.includes("mistral") ||
+    value.includes("codestral") ||
+    value.includes("devstral") ||
+    value.includes("magistral")
+  ) {
+    return "mistral";
+  }
+  if (value.includes("command-") || value.includes("cohere")) return "cohere";
+  if (value.includes("grok")) return "xai";
+  if (value.includes("hunyuan") || /^hy3\b/.test(value)) return "hunyuan";
+  if (value.includes("mimo")) return "xiaomi";
+  if (value.includes("step-")) return "stepfun";
+  return "custom";
+}
+
+function loadCCSwitchModels(): ModelCatalogEntry[] {
+  const bundled = bundledModelCatalog.map((model) => ({
+    ...model,
+    provider: modelProvider(model.id, model.name),
+  }));
+  const databasePath = join(app.getPath("home"), ".cc-switch", "cc-switch.db");
+  if (!existsSync(databasePath)) return bundled;
+  let database: DatabaseSync | null = null;
+  try {
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    const rows = database
+      .prepare(
+        "SELECT model_id, display_name FROM model_pricing WHERE model_id IS NOT NULL ORDER BY model_id",
+      )
+      .all() as Array<Record<string, unknown>>;
+    const liveModels = rows.flatMap((row): ModelCatalogEntry[] => {
+      if (typeof row.model_id !== "string" || !row.model_id.trim()) return [];
+      const id = row.model_id.trim();
+      const name =
+        typeof row.display_name === "string" && row.display_name.trim()
+          ? row.display_name.trim()
+          : id;
+      return [{ id, name, provider: modelProvider(id, name) }];
+    });
+    if (!liveModels.length) return bundled;
+    const merged = new Map(bundled.map((model) => [model.id, model]));
+    for (const model of liveModels) merged.set(model.id, model);
+    return [...merged.values()].sort((left, right) => left.id.localeCompare(right.id));
+  } catch {
+    return bundled;
+  } finally {
+    database?.close();
+  }
+}
+
 function balanceResult(
   status: BalanceStatus["status"],
   provider: string,
@@ -428,7 +587,7 @@ async function queryBalance(): Promise<BalanceStatus> {
     ]);
   }
 
-  const settingsPath = join(app.getPath("home"), ".claude", "settings.json");
+  const settingsPath = join(resolveClaudeConfigDirectory(), "settings.json");
   let env: Record<string, unknown> | null = null;
   try {
     const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
@@ -817,6 +976,49 @@ function handleClaudeEvent(
   }
 }
 
+function createAssistantMessage(timestamp = now()): ChatMessage {
+  return {
+    id: randomUUID(),
+    role: "assistant",
+    content: "",
+    reasoning: "",
+    createdAt: timestamp,
+    status: "streaming",
+    toolCalls: [],
+  };
+}
+
+function stopQueuedMessages(session: ChatSession, reason: string): void {
+  for (const queued of session.messages) {
+    if (queued.role === "user" && queued.status === "queued") {
+      queued.status = "stopped";
+      queued.error = reason;
+    }
+  }
+}
+
+function startNextQueuedMessage(session: ChatSession): boolean {
+  const queuedIndex = session.messages.findIndex(
+    (message) => message.role === "user" && message.status === "queued",
+  );
+  if (queuedIndex < 0) return false;
+  if (!isDirectory(session.cwd)) {
+    stopQueuedMessages(session, "项目文件夹已不存在，消息未自动发送。");
+    session.status = "error";
+    return false;
+  }
+
+  const queued = session.messages[queuedIndex];
+  queued.status = "complete";
+  delete queued.error;
+  const response = createAssistantMessage();
+  session.messages.splice(queuedIndex + 1, 0, response);
+  session.updatedAt = now();
+  session.status = "starting";
+  startClaude(session, queued.content, response.id);
+  return true;
+}
+
 function finishJob(sessionId: string, exitCode: number | null): void {
   const job = activeJobs.get(sessionId);
   if (!job) return;
@@ -826,8 +1028,13 @@ function finishJob(sessionId: string, exitCode: number | null): void {
   if (job.stopped) {
     message.status = "stopped";
     session.status = "idle";
+  } else if (exitCode !== 0) {
+    message.status = "error";
+    session.status = "error";
+    const cleaned = job.stderr.trim().slice(-4_000);
+    message.error = cleaned || `Claude Code 已退出（代码 ${exitCode ?? "未知"}）。`;
   } else if (message.status === "streaming") {
-    if (exitCode === 0 && message.content) {
+    if (message.content) {
       message.status = "complete";
       session.status = "idle";
       session.started = true;
@@ -839,13 +1046,27 @@ function finishJob(sessionId: string, exitCode: number | null): void {
     }
   }
 
+  const completedSuccessfully =
+    !job.stopped && exitCode === 0 && message.status === "complete";
   for (const tool of message.toolCalls ?? []) {
-    if (tool.status === "running") tool.status = job.stopped ? "error" : "success";
+    if (tool.status === "running") {
+      tool.status = completedSuccessfully ? "success" : "error";
+    }
     delete tool.inputBuffer;
   }
 
   session.updatedAt = now();
   activeJobs.delete(sessionId);
+  if (completedSuccessfully) {
+    startNextQueuedMessage(session);
+  } else {
+    stopQueuedMessages(
+      session,
+      job.stopped
+        ? "当前回复已停止，这条排队消息没有自动发送。"
+        : "上一条回复未正常完成，这条排队消息没有自动发送。",
+    );
+  }
   scheduleSync(sessionId, true);
 }
 
@@ -939,6 +1160,12 @@ function startClaude(session: ChatSession, prompt: string, assistantId: string):
 
 function registerIpc(): void {
   ipcMain.handle("state:get", () => publicState());
+  ipcMain.handle("models:catalog", () => loadCCSwitchModels());
+  ipcMain.handle("clipboard:readText", () => clipboard.readText());
+  ipcMain.handle("clipboard:writeText", (_event, value: unknown) => {
+    clipboard.writeText(typeof value === "string" ? value : String(value ?? ""));
+    return true;
+  });
 
   ipcMain.handle("project:create", (_event, input: Pick<Project, "name" | "cwd">) => {
     const cwd = typeof input?.cwd === "string" ? resolve(input.cwd) : "";
@@ -948,6 +1175,17 @@ function registerIpc(): void {
     if (existing) return existing;
     const project = createProjectRecord(name || projectNameFromPath(cwd), cwd);
     store.projects.push(project);
+    scheduleSave();
+    emitState();
+    return project;
+  });
+
+  ipcMain.handle("project:update", (_event, id: string, patch: Partial<Project>) => {
+    const project = projectById(id);
+    if (typeof patch.name === "string") {
+      project.name = patch.name.trim() || projectNameFromPath(project.cwd);
+    }
+    project.updatedAt = now();
     scheduleSave();
     emitState();
     return project;
@@ -1006,7 +1244,7 @@ function registerIpc(): void {
     }
     if (isEffortLevel(patch.effort)) session.effort = patch.effort;
     if (typeof patch.requestedModel === "string") {
-      const requestedModel = patch.requestedModel.trim();
+      const requestedModel = migrateModel(patch.requestedModel);
       if (requestedModel !== (session.requestedModel ?? "")) {
         session.contextUsage.contextWindowTokens = 0;
       }
@@ -1028,38 +1266,48 @@ function registerIpc(): void {
   ipcMain.handle("chat:send", (_event, id: string, rawPrompt: string) => {
     const prompt = rawPrompt.trim();
     if (!prompt) throw new Error("请输入消息。");
-    if (activeJobs.has(id)) throw new Error("Claude 仍在回复，请稍候或先停止。 ");
     const session = sessionById(id);
     if (!isDirectory(session.cwd)) throw new Error("当前项目文件夹不存在，请重新选择。");
 
     const timestamp = now();
+    const isQueued = activeJobs.has(id);
+    if (
+      isQueued &&
+      session.messages.filter(
+        (message) => message.role === "user" && message.status === "queued",
+      ).length >= MAX_QUEUED_MESSAGES
+    ) {
+      throw new Error(`当前会话最多排队 ${MAX_QUEUED_MESSAGES} 条消息。`);
+    }
     const userMessage: ChatMessage = {
       id: randomUUID(),
       role: "user",
       content: prompt,
       createdAt: timestamp,
-      status: "complete",
-    };
-    const response: ChatMessage = {
-      id: randomUUID(),
-      role: "assistant",
-      content: "",
-      reasoning: "",
-      createdAt: timestamp,
-      status: "streaming",
-      toolCalls: [],
+      status: isQueued ? "queued" : "complete",
     };
     if (session.messages.length === 0 && !session.titleEdited) {
       session.title = titleFromPrompt(prompt);
     }
-    session.messages.push(userMessage, response);
     session.updatedAt = timestamp;
+    if (isQueued) {
+      session.messages.push(userMessage);
+      scheduleSync(id, true);
+      return { userMessageId: userMessage.id, queued: true };
+    }
+
+    const response = createAssistantMessage(timestamp);
+    session.messages.push(userMessage, response);
     session.status = "starting";
     startClaude(session, prompt, response.id);
-    return { userMessageId: userMessage.id, assistantMessageId: response.id };
+    return {
+      userMessageId: userMessage.id,
+      assistantMessageId: response.id,
+      queued: false,
+    };
   });
 
-  ipcMain.handle("chat:stop", (_event, id: string) => {
+  ipcMain.handle("chat:stop", async (_event, id: string) => {
     const job = activeJobs.get(id);
     if (!job) return false;
     job.stopped = true;
@@ -1068,9 +1316,25 @@ function registerIpc(): void {
       const killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
         windowsHide: true,
       });
-      killer.on("error", () => job.child.kill());
+      const killedTree = await new Promise<boolean>((resolveKilled) => {
+        let settled = false;
+        const settle = (value: boolean) => {
+          if (settled) return;
+          settled = true;
+          resolveKilled(value);
+        };
+        killer.once("error", () => settle(false));
+        killer.once("close", (code) => settle(code === 0));
+      });
+      if (!killedTree && activeJobs.has(id) && !job.child.kill()) {
+        job.stopped = false;
+        throw new Error("无法停止当前 Claude 任务，请稍后重试。");
+      }
     } else {
-      job.child.kill("SIGTERM");
+      if (!job.child.kill("SIGTERM") && activeJobs.has(id)) {
+        job.stopped = false;
+        throw new Error("无法停止当前 Claude 任务，请稍后重试。");
+      }
     }
     return true;
   });
@@ -1093,7 +1357,7 @@ function registerIpc(): void {
       store.settings.defaultEffort = patch.defaultEffort;
     }
     if (typeof patch.requestedModel === "string") {
-      store.settings.requestedModel = patch.requestedModel.trim();
+      store.settings.requestedModel = migrateModel(patch.requestedModel);
     }
     if (typeof patch.claudePath === "string") {
       const candidate = patch.claudePath.trim();
@@ -1206,6 +1470,7 @@ if (previewMode) {
 
 app.whenReady().then(() => {
   store = loadStore();
+  saveStoreNow();
   nativeTheme.themeSource = store.settings.theme;
   registerIpc();
   createWindow();

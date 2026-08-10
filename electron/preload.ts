@@ -2,7 +2,10 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const api = {
   getState: () => ipcRenderer.invoke("state:get"),
+  getModelCatalog: () => ipcRenderer.invoke("models:catalog"),
   createProject: (input: unknown) => ipcRenderer.invoke("project:create", input),
+  updateProject: (id: string, patch: unknown) =>
+    ipcRenderer.invoke("project:update", id, patch),
   createSession: (input?: unknown) => ipcRenderer.invoke("session:create", input),
   updateSession: (id: string, patch: unknown) =>
     ipcRenderer.invoke("session:update", id, patch),
@@ -17,6 +20,8 @@ const api = {
   openExternal: (url: string) => ipcRenderer.invoke("external:open", url),
   claudeStatus: () => ipcRenderer.invoke("claude:status"),
   queryBalance: () => ipcRenderer.invoke("balance:query"),
+  readClipboard: () => ipcRenderer.invoke("clipboard:readText"),
+  writeClipboard: (text: string) => ipcRenderer.invoke("clipboard:writeText", text),
   onStateChanged: (callback: (state: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
     ipcRenderer.on("state:changed", listener);
