@@ -27,6 +27,7 @@ type PermissionMode = "plan" | "auto" | "acceptEdits" | "dontAsk";
 type EffortLevel = "" | "low" | "medium" | "high" | "xhigh" | "max";
 type MessageStatus = "queued" | "streaming" | "complete" | "error" | "stopped";
 type ToolStatus = "running" | "success" | "error";
+type ProjectNameSource = "directory" | "metadata" | "task" | "user";
 
 interface ContextUsage {
   inputTokens: number;
@@ -56,6 +57,7 @@ interface ChatMessage {
   error?: string;
   costUsd?: number;
   durationMs?: number;
+  topic?: string;
 }
 
 interface ChatSession {
@@ -82,6 +84,7 @@ interface Project {
   cwd: string;
   createdAt: string;
   updatedAt: string;
+  nameSource?: ProjectNameSource;
 }
 
 interface AppSettings {
@@ -156,6 +159,10 @@ function isDirectory(path: string): boolean {
   }
 }
 
+function sameDirectoryPath(left: string, right: string): boolean {
+  return resolve(left).toLowerCase() === resolve(right).toLowerCase();
+}
+
 function isEffortLevel(value: unknown): value is EffortLevel {
   return typeof value === "string" && effortLevels.includes(value as EffortLevel);
 }
@@ -216,12 +223,16 @@ function defaultStore(): AppStore {
   if (!previewMode) return base;
 
   const timestamp = now();
+  const firstPreviewTimestamp = new Date(Date.now() - 18 * 60_000).toISOString();
+  const secondPreviewTimestamp = new Date(Date.now() - 9 * 60_000).toISOString();
+  const thirdPreviewTimestamp = new Date(Date.now() - 2 * 60_000).toISOString();
   const project: Project = {
     id: "preview-project",
     name: "Claude Code UI",
     cwd: process.cwd(),
-    createdAt: timestamp,
+    createdAt: firstPreviewTimestamp,
     updatedAt: timestamp,
+    nameSource: "metadata",
   };
   return {
     ...base,
@@ -231,10 +242,10 @@ function defaultStore(): AppStore {
       {
         id: "preview-conversation-a",
         projectId: project.id,
-        title: "4.0 工作台体验升级",
+        title: "5.0 本地测试版体验升级",
         titleEdited: true,
         cwd: project.cwd,
-        createdAt: timestamp,
+        createdAt: firstPreviewTimestamp,
         updatedAt: timestamp,
         started: true,
         permissionMode: "auto",
@@ -254,18 +265,55 @@ function defaultStore(): AppStore {
             id: "preview-user-message",
             role: "user",
             content: "把工作台的上下文状态、模型图标和消息操作统一优化。",
-            createdAt: timestamp,
+            createdAt: firstPreviewTimestamp,
             status: "complete",
+            topic: "统一优化工作台界面",
           },
           {
             id: "preview-assistant-message",
             role: "assistant",
             content:
               "已完成第一轮界面整理。现在上下文改为轻量环形状态，消息下方可直接复制，输入区也支持右键编辑菜单。",
-            createdAt: timestamp,
+            createdAt: firstPreviewTimestamp,
             status: "complete",
             toolCalls: [],
             durationMs: 2_840,
+          },
+          {
+            id: "preview-user-models",
+            role: "user",
+            content: "把 Claude、GPT、DeepSeek 等模型按厂商大类折叠，展开后再选择具体版本。",
+            createdAt: secondPreviewTimestamp,
+            status: "complete",
+            topic: "按厂商折叠模型目录",
+          },
+          {
+            id: "preview-assistant-models",
+            role: "assistant",
+            content:
+              "模型选择器已经按供应商重新整理，并保留搜索与自定义模型 ID；各厂商继续使用对应品牌图标。",
+            createdAt: secondPreviewTimestamp,
+            status: "complete",
+            toolCalls: [],
+            durationMs: 1_920,
+          },
+          {
+            id: "preview-user-timeline",
+            role: "user",
+            content: "新增任务时间线，并让新项目自动识别主题和命名。",
+            createdAt: thirdPreviewTimestamp,
+            status: "complete",
+            topic: "新增任务时间线与自动命名",
+          },
+          {
+            id: "preview-assistant-timeline",
+            role: "assistant",
+            content:
+              "右侧时间线会按每次用户要求整理节点，点击可跳回对应内容；新项目名称则优先从本地项目元数据识别。",
+            createdAt: thirdPreviewTimestamp,
+            status: "complete",
+            toolCalls: [],
+            durationMs: 2_360,
           },
         ],
       },
@@ -292,14 +340,121 @@ function projectNameFromPath(cwd: string): string {
   return basename(cwd) || cwd || "未命名项目";
 }
 
+function cleanProjectName(value: unknown): string {
+  if (typeof value !== "string") return "";
+  let name = value.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim();
+  if (name.startsWith("@") && name.includes("/")) name = name.split("/").at(-1) ?? name;
+  name = name.replace(/\.git$/i, "").trim();
+  return Array.from(name).slice(0, 60).join("");
+}
+
+function readSmallProjectFile(path: string): string {
+  try {
+    const stats = statSync(path);
+    if (!stats.isFile() || stats.size > 256 * 1024) return "";
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function tomlProjectName(content: string, sections: string[]): string {
+  const acceptedSections = new Set(sections);
+  const namesBySection = new Map<string, string>();
+  let activeSection = "";
+
+  for (const rawLine of content.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+    const section = rawLine.match(/^\s*\[([^\[\]]+)]\s*(?:#.*)?$/)?.[1]?.trim();
+    if (section) {
+      activeSection = section;
+      continue;
+    }
+    if (/^\s*\[/.test(rawLine)) {
+      activeSection = "";
+      continue;
+    }
+    if (!acceptedSections.has(activeSection)) continue;
+
+    const match = rawLine.match(/^\s*name\s*=\s*(["'])(.*?)\1\s*(?:#.*)?$/);
+    const name = cleanProjectName(match?.[2]);
+    if (name && !namesBySection.has(activeSection)) {
+      namesBySection.set(activeSection, name);
+    }
+  }
+  return sections.map((section) => namesBySection.get(section)).find(Boolean) ?? "";
+}
+
+function gitRepositoryName(content: string): string {
+  const remote = content.match(/^\s*url\s*=\s*(.+)$/m)?.[1]?.trim();
+  if (!remote) return "";
+  const withoutQuery = remote.split(/[?#]/, 1)[0].replace(/[\\/]+$/, "");
+  return cleanProjectName(withoutQuery.split(/[\\/:]/).at(-1));
+}
+
+function detectProjectIdentity(cwd: string): {
+  name: string;
+  source: Exclude<ProjectNameSource, "task" | "user">;
+} {
+  const packageJson = readSmallProjectFile(join(cwd, "package.json"));
+  if (packageJson) {
+    try {
+      const parsed = JSON.parse(packageJson) as Record<string, unknown>;
+      const name = cleanProjectName(parsed.productName || parsed.displayName || parsed.name);
+      if (name) return { name, source: "metadata" };
+    } catch {
+      // Invalid project metadata falls through to the next safe detector.
+    }
+  }
+
+  const pyprojectName = tomlProjectName(
+    readSmallProjectFile(join(cwd, "pyproject.toml")),
+    ["project", "tool.poetry"],
+  );
+  if (pyprojectName) return { name: pyprojectName, source: "metadata" };
+
+  const cargoName = tomlProjectName(readSmallProjectFile(join(cwd, "Cargo.toml")), [
+    "package",
+  ]);
+  if (cargoName) return { name: cargoName, source: "metadata" };
+
+  const goModule = readSmallProjectFile(join(cwd, "go.mod")).match(
+    /^\s*module\s+([^\s]+)\s*$/m,
+  )?.[1];
+  if (goModule) {
+    const name = cleanProjectName(goModule.split("/").at(-1));
+    if (name) return { name, source: "metadata" };
+  }
+
+  const pom = readSmallProjectFile(join(cwd, "pom.xml")).replace(
+    /<parent\b[\s\S]*?<\/parent>/i,
+    "",
+  );
+  const artifactId = cleanProjectName(pom.match(/<artifactId>\s*([^<]+)\s*<\/artifactId>/i)?.[1]);
+  if (artifactId) return { name: artifactId, source: "metadata" };
+
+  const gitName = gitRepositoryName(readSmallProjectFile(join(cwd, ".git", "config")));
+  if (gitName) return { name: gitName, source: "metadata" };
+
+  return { name: projectNameFromPath(cwd), source: "directory" };
+}
+
+function isProjectNameSource(value: unknown): value is ProjectNameSource {
+  return ["directory", "metadata", "task", "user"].includes(String(value));
+}
+
 function createProjectRecord(name: string, cwd: string): Project {
   const timestamp = now();
+  const explicitName = cleanProjectName(name);
+  const identity = explicitName
+    ? { name: explicitName, source: "user" as const }
+    : detectProjectIdentity(cwd);
   return {
     id: randomUUID(),
-    name: name.trim() || projectNameFromPath(cwd),
+    name: identity.name,
     cwd,
     createdAt: timestamp,
     updatedAt: timestamp,
+    nameSource: identity.source,
   };
 }
 
@@ -307,6 +462,22 @@ function projectById(id: string): Project {
   const project = store.projects.find((item) => item.id === id);
   if (!project) throw new Error("项目不存在，请重新选择项目后再试。");
   return project;
+}
+
+function requireExistingProjectDirectory(project: Project): string {
+  if (!isDirectory(project.cwd)) {
+    throw new Error("项目文件夹不存在，请重新选择文件夹并新建项目。");
+  }
+  return project.cwd;
+}
+
+function canNameProjectFromFirstTask(
+  project: Project | undefined,
+  isFirstProjectTask: boolean,
+): project is Project {
+  return Boolean(
+    project && isFirstProjectTask && project.nameSource === "directory",
+  );
 }
 
 function preserveUnusableStore(): void {
@@ -340,7 +511,7 @@ function loadStore(): AppStore {
     const defaults = defaultStore();
     parsed.settings = { ...defaults.settings, ...parsed.settings };
     parsed.settings.requestedModel = migrateModel(parsed.settings.requestedModel);
-    const projects = Array.isArray(parsed.projects)
+    const projects: Project[] = Array.isArray(parsed.projects)
       ? parsed.projects
           .filter(
             (project): project is Project =>
@@ -354,18 +525,24 @@ function loadStore(): AppStore {
             name: project.name.trim() || projectNameFromPath(project.cwd),
             createdAt: project.createdAt || now(),
             updatedAt: project.updatedAt || now(),
+            nameSource: isProjectNameSource(project.nameSource)
+              ? project.nameSource
+              : undefined,
           }))
       : [];
     const projectForCwd = (cwd: string): Project => {
-      const existing = projects.find((project) => project.cwd === cwd);
+      const existing = projects.find((project) => sameDirectoryPath(project.cwd, cwd));
       if (existing) return existing;
-      const project = createProjectRecord(projectNameFromPath(cwd), cwd);
+      const project = createProjectRecord("", cwd);
       projects.push(project);
       return project;
     };
     parsed.sessions = parsed.sessions.map((session) => {
       const normalizedCwd = typeof session.cwd === "string" ? session.cwd : defaults.settings.defaultCwd;
-      const existingProject = projects.find((project) => project.id === session.projectId);
+      const existingProject = projects.find(
+        (project) =>
+          project.id === session.projectId && sameDirectoryPath(project.cwd, normalizedCwd),
+      );
       const project = existingProject ?? projectForCwd(normalizedCwd);
       return {
       ...session,
@@ -610,6 +787,15 @@ async function queryBalance(): Promise<BalanceStatus> {
   let endpoint: URL;
   try {
     const configured = new URL(baseUrl);
+    if (configured.protocol !== "https:") {
+      return balanceResult(
+        "error",
+        configured.hostname || "当前供应商",
+        false,
+        [],
+        "为保护 API 凭据，余额查询只允许使用 HTTPS。",
+      );
+    }
     if (configured.hostname.toLowerCase() !== "api.deepseek.com") {
       return balanceResult(
         "unsupported",
@@ -657,10 +843,108 @@ async function queryBalance(): Promise<BalanceStatus> {
   }
 }
 
+function cleanTopicClause(value: string): string {
+  let topic = value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/^\s*(?:(?:#{1,6}|>|[-*+]|\d+[.)、])\s*)+/, "")
+    .replace(/[*_~`]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  topic = topic
+    .replace(
+      /^(?:(?:请(?:你)?|麻烦(?:你)?|帮我|我(?:想|希望|需要)(?:要)?|我们(?:想|希望|需要)(?:要)?|能否|能不能|可以(?:帮我)?|是否|应该(?:是)?|接下来|然后|现在|这次|另外(?:还)?(?:要)?|此外(?:还)?(?:要)?|同时(?:还)?(?:要)?|还有|并且(?:还)?(?:要)?|也(?:要)?|还要|就是|像你这样)\s*[，,、:：]?\s*)+/u,
+      "",
+    )
+    .replace(
+      /^(?:(?:please|could you|can you|would you|i (?:want|need)(?: you)? to|i(?:'d| would) like(?: you)? to|we (?:want|need|would like) to|also|then|next|now)\b[\s,:-]*)+/iu,
+      "",
+    )
+    .replace(
+      /[，,、:：\s]*(?:对不对|对吗|好吗|可以吗|行吗|是不是|right|okay|ok)\s*[?？]?$/iu,
+      "",
+    )
+    .replace(/^上下滑动(?=时间线)/u, "")
+    .replace(/(?:这个是)?当前(?:那时候|当时)的/gu, "当前")
+    .replace(/(?:可以|能够)(?=显示|识别|创建|新建|命名)/gu, "")
+    .replace(/主要是(?:用来)?干什么的/gu, "主要任务")
+    .replace(/^[，,、:：;；\-\s]+|[，,、:：;；\-\s]+$/gu, "")
+    .trim();
+
+  return topic;
+}
+
+function topicClauseScore(value: string, index: number): number {
+  const actions = new Set(
+    [
+      ...(value.match(
+        /新增|新建|添加|实现|修复|修改|优化|重构|测试|检查|排查|发布|上传|推送|删除|迁移|支持|显示|识别|命名|创建|改进|调整|解决|浏览|分析|解释|提交/gu,
+      ) ?? []),
+      ...(value.match(
+        /\b(?:add|create|implement|fix|update|improve|refactor|test|check|debug|release|publish|upload|push|delete|migrate|support|show|display|identify|detect|rename|auto[- ]?name|inspect|analyze|explain|review)\b/giu,
+      ) ?? []),
+    ].map((item) => item.toLowerCase()),
+  );
+  const objects = new Set(
+    [
+      ...(value.match(
+        /时间线|项目|对话|会话|功能|页面|窗口|界面|模型|目录|主题|名称|错误|问题/gu,
+      ) ?? []),
+      ...(value.match(
+        /\b(?:timeline|project|conversation|chat|session|feature|page|window|interface|ui|model|directory|topic|name|error|issue)\b/giu,
+      ) ?? []),
+    ].map((item) => item.toLowerCase()),
+  );
+  const lengthScore = Math.min(Array.from(value).length, 24);
+  const preamblePenalty = /^(?:我看|我觉得|感觉|不太满意|你确定|好[的啊]?|继续|i (?:looked|checked|think)|not happy|are you sure|well\b)/iu.test(
+    value,
+  )
+    ? 24
+    : 0;
+
+  return (
+    actions.size * 18 +
+    objects.size * 10 +
+    lengthScore +
+    Math.min(index, 20) -
+    preamblePenalty
+  );
+}
+
+function truncateTopic(value: string, maximum = 40): string {
+  const characters = Array.from(value);
+  return characters.length > maximum
+    ? `${characters.slice(0, maximum).join("")}…`
+    : value;
+}
+
 function titleFromPrompt(prompt: string): string {
-  const compact = prompt.replace(/\s+/g, " ").trim();
-  if (!compact) return "新会话";
-  return compact.length > 28 ? `${compact.slice(0, 28)}…` : compact;
+  const sample =
+    prompt.length > 16_000
+      ? `${prompt.slice(0, 8_000)}\n${prompt.slice(-8_000)}`
+      : prompt;
+  const withoutFencedCode = sample.replace(/```[\s\S]*?```/g, " ");
+  const candidates = withoutFencedCode
+    .split(
+      /(?:\r?\n)+|[。！？!?；;，,：:]+|\b(?:but|however|please|also|then|next)\b/iu,
+    )
+    .map(cleanTopicClause)
+    .filter((value) => Array.from(value).length >= 2);
+
+  if (!candidates.length) {
+    return truncateTopic(cleanTopicClause(prompt) || "新会话");
+  }
+
+  let bestIndex = 0;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  candidates.forEach((candidate, index) => {
+    const score = topicClauseScore(candidate, index);
+    if (score >= bestScore) {
+      bestIndex = index;
+      bestScore = score;
+    }
+  });
+  return truncateTopic(candidates[bestIndex]);
 }
 
 function toolById(message: ChatMessage, id: string): ToolCall | undefined {
@@ -1171,9 +1455,9 @@ function registerIpc(): void {
     const cwd = typeof input?.cwd === "string" ? resolve(input.cwd) : "";
     if (!cwd || !isDirectory(cwd)) throw new Error("请选择一个有效的项目文件夹。");
     const name = typeof input?.name === "string" ? input.name.trim() : "";
-    const existing = store.projects.find((project) => project.cwd === cwd);
+    const existing = store.projects.find((project) => sameDirectoryPath(project.cwd, cwd));
     if (existing) return existing;
-    const project = createProjectRecord(name || projectNameFromPath(cwd), cwd);
+    const project = createProjectRecord(name, cwd);
     store.projects.push(project);
     scheduleSave();
     emitState();
@@ -1183,7 +1467,8 @@ function registerIpc(): void {
   ipcMain.handle("project:update", (_event, id: string, patch: Partial<Project>) => {
     const project = projectById(id);
     if (typeof patch.name === "string") {
-      project.name = patch.name.trim() || projectNameFromPath(project.cwd);
+      project.name = cleanProjectName(patch.name) || projectNameFromPath(project.cwd);
+      project.nameSource = "user";
     }
     project.updatedAt = now();
     scheduleSave();
@@ -1192,21 +1477,28 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("session:create", (_event, input?: Partial<ChatSession>) => {
-    const requestedCwd = input?.cwd && isDirectory(input.cwd) ? resolve(input.cwd) : store.settings.defaultCwd;
+    const requestedCwd =
+      typeof input?.cwd === "string" && input.cwd.trim()
+        ? resolve(input.cwd)
+        : store.settings.defaultCwd;
+    if (!input?.projectId && !isDirectory(requestedCwd)) {
+      throw new Error("项目文件夹不存在，请重新选择文件夹并新建项目。");
+    }
     const project = input?.projectId
       ? projectById(input.projectId)
-      : store.projects.find((item) => item.cwd === requestedCwd) ?? (() => {
-          const created = createProjectRecord(projectNameFromPath(requestedCwd), requestedCwd);
+      : store.projects.find((item) => sameDirectoryPath(item.cwd, requestedCwd)) ?? (() => {
+          const created = createProjectRecord("", requestedCwd);
           store.projects.push(created);
           return created;
         })();
+    const projectCwd = requireExistingProjectDirectory(project);
     const timestamp = now();
     const session: ChatSession = {
       id: randomUUID(),
       projectId: project.id,
       title: "新会话",
       titleEdited: false,
-      cwd: isDirectory(project.cwd) ? project.cwd : app.getPath("documents"),
+      cwd: projectCwd,
       createdAt: timestamp,
       updatedAt: timestamp,
       started: false,
@@ -1234,7 +1526,15 @@ function registerIpc(): void {
     if (typeof patch.cwd === "string") {
       const cwd = resolve(patch.cwd);
       if (!isDirectory(cwd)) throw new Error("所选项目文件夹不存在。");
+      if (session.started && !sameDirectoryPath(session.cwd, cwd)) {
+        throw new Error("已开始的会话不能更换项目目录，请在目标项目中新建会话。");
+      }
+      const project = store.projects.find((item) => sameDirectoryPath(item.cwd, cwd));
+      if (!project) {
+        throw new Error("请先为这个文件夹新建项目，再在项目中创建会话。");
+      }
       session.cwd = cwd;
+      session.projectId = project.id;
     }
     if (
       patch.permissionMode &&
@@ -1279,15 +1579,30 @@ function registerIpc(): void {
     ) {
       throw new Error(`当前会话最多排队 ${MAX_QUEUED_MESSAGES} 条消息。`);
     }
+    const topic = titleFromPrompt(prompt);
     const userMessage: ChatMessage = {
       id: randomUUID(),
       role: "user",
       content: prompt,
       createdAt: timestamp,
       status: isQueued ? "queued" : "complete",
+      topic,
     };
     if (session.messages.length === 0 && !session.titleEdited) {
-      session.title = titleFromPrompt(prompt);
+      session.title = topic;
+    }
+    const project = store.projects.find((item) => item.id === session.projectId);
+    const isFirstProjectTask = project
+      ? !store.sessions.some(
+          (item) =>
+            item.projectId === project.id &&
+            item.messages.some((message) => message.role === "user"),
+        )
+      : false;
+    if (canNameProjectFromFirstTask(project, isFirstProjectTask)) {
+      project.name = topic;
+      project.nameSource = "task";
+      project.updatedAt = timestamp;
     }
     session.updatedAt = timestamp;
     if (isQueued) {

@@ -9,7 +9,13 @@ import {
   ShieldCheck,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import type {
   ChatSession,
   EffortLevel,
@@ -109,7 +115,7 @@ function displayModel(session: ChatSession): string {
   return modelLabel(requested);
 }
 
-function EffortGlyph({ level }: { level: number }) {
+export function EffortGlyph({ level }: { level: number }) {
   return (
     <span className={`effort-glyph effort-level-${level}`} aria-hidden="true">
       {[1, 2, 3, 4, 5].map((bar) => (
@@ -128,8 +134,29 @@ export default function ComposerTuningControls({
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [modelDraft, setModelDraft] = useState(session.requestedModel ?? "");
   const [modelSearch, setModelSearch] = useState("");
+  const [expandedProvider, setExpandedProvider] = useState<ModelIconKind | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const effortTriggerRef = useRef<HTMLButtonElement>(null);
+  const permissionTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const restoreTriggerFocus = (menu: Exclude<OpenMenu, null>) => {
+    window.requestAnimationFrame(() => {
+      const trigger =
+        menu === "model"
+          ? modelTriggerRef.current
+          : menu === "effort"
+            ? effortTriggerRef.current
+            : permissionTriggerRef.current;
+      if (trigger && !trigger.disabled) trigger.focus();
+    });
+  };
+
+  const closeMenu = (menu: Exclude<OpenMenu, null>, restoreFocus = false) => {
+    setOpenMenu(null);
+    if (restoreFocus) restoreTriggerFocus(menu);
+  };
 
   const modelOptions = useMemo(() => {
     const options = new Map<
@@ -165,6 +192,7 @@ export default function ComposerTuningControls({
     const query = modelSearch.trim().toLowerCase();
     const groups = new Map<ModelIconKind, typeof modelOptions>();
     for (const option of modelOptions) {
+      if (option.provider === "follow") continue;
       const providerLabel = modelProviderLabel(option.provider);
       if (
         query &&
@@ -177,7 +205,6 @@ export default function ComposerTuningControls({
       groups.set(option.provider, group);
     }
     const order: ModelIconKind[] = [
-      "follow",
       "anthropic",
       "deepseek",
       "openai",
@@ -201,6 +228,13 @@ export default function ComposerTuningControls({
     });
   }, [modelOptions, modelSearch]);
 
+  const followOption = modelOptions.find((option) => option.provider === "follow");
+  const isSearchingModels = modelSearch.trim().length > 0;
+  const matchingModelCount = groupedModelOptions.reduce(
+    (count, group) => count + group.options.length,
+    0,
+  );
+
   useEffect(() => {
     if (!openMenu) setModelDraft(session.requestedModel ?? "");
   }, [openMenu, session.requestedModel]);
@@ -212,8 +246,9 @@ export default function ComposerTuningControls({
     };
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         event.stopPropagation();
-        setOpenMenu(null);
+        closeMenu(openMenu, true);
       }
     };
     window.addEventListener("pointerdown", closeOnOutside);
@@ -222,6 +257,22 @@ export default function ComposerTuningControls({
       window.removeEventListener("pointerdown", closeOnOutside);
       window.removeEventListener("keydown", closeOnEscape, true);
     };
+  }, [openMenu]);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (openMenu === "model") {
+        modelSearchRef.current?.focus();
+        return;
+      }
+      rootRef.current
+        ?.querySelector<HTMLButtonElement>(
+          `#composer-${openMenu}-picker .tuning-option.selected`,
+        )
+        ?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [openMenu]);
 
   useEffect(() => {
@@ -235,7 +286,7 @@ export default function ComposerTuningControls({
       if (next === "model") {
         setModelDraft(session.requestedModel ?? "");
         setModelSearch("");
-        requestAnimationFrame(() => modelSearchRef.current?.focus());
+        setExpandedProvider(null);
       }
       return next;
     });
@@ -244,7 +295,7 @@ export default function ComposerTuningControls({
   const chooseModel = async (value: string) => {
     setModelDraft(value);
     await onUpdate({ requestedModel: value });
-    setOpenMenu(null);
+    closeMenu("model", true);
   };
 
   const applyCustomModel = async () => {
@@ -253,20 +304,81 @@ export default function ComposerTuningControls({
 
   const chooseEffort = async (value: EffortLevel) => {
     await onUpdate({ effort: value });
-    setOpenMenu(null);
+    closeMenu("effort", true);
   };
 
   const choosePermission = async (value: PermissionMode) => {
     await onUpdate({ permissionMode: value });
-    setOpenMenu(null);
+    closeMenu("permission", true);
+  };
+
+  const onProviderKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    provider: ModelIconKind,
+  ) => {
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setExpandedProvider(provider);
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      if (expandedProvider === provider) {
+        event.preventDefault();
+        setExpandedProvider(null);
+      }
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+
+    const triggers = Array.from(
+      rootRef.current?.querySelectorAll<HTMLButtonElement>(".model-provider-trigger") ?? [],
+    );
+    const currentIndex = triggers.indexOf(event.currentTarget);
+    if (currentIndex < 0 || !triggers.length) return;
+    event.preventDefault();
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? triggers.length - 1
+          : (currentIndex + (event.key === "ArrowDown" ? 1 : -1) + triggers.length) %
+            triggers.length;
+    triggers[nextIndex]?.focus();
   };
 
   const PermissionIcon = modeInfo[session.permissionMode].icon;
+
+  const renderModelOption = (
+    option: (typeof modelOptions)[number],
+    extraClassName = "",
+  ) => {
+    const selected = session.requestedModel === option.value;
+    return (
+      <button
+        type="button"
+        className={`tuning-option model-option ${extraClassName} ${selected ? "selected" : ""}`.trim()}
+        key={option.value || "follow"}
+        data-value={option.value}
+        onClick={() => void chooseModel(option.value)}
+        aria-pressed={selected}
+      >
+        <span className="model-option-mark">
+          <ModelBrandIcon model={option.value} provider={option.provider} size={16} />
+        </span>
+        <span className="tuning-option-copy">
+          <strong>{option.label}</strong>
+          <small>{option.description}</small>
+        </span>
+        {selected && <Check size={16} className="option-check" />}
+      </button>
+    );
+  };
 
   return (
     <div className="tuning-controls" ref={rootRef}>
       <div className="tuning-control-wrap model-control-wrap">
         <button
+          ref={modelTriggerRef}
           type="button"
           className={`tuning-trigger ${openMenu === "model" ? "is-open" : ""}`}
           onClick={() => toggleMenu("model")}
@@ -277,7 +389,7 @@ export default function ComposerTuningControls({
             }
           }}
           disabled={disabled}
-          aria-haspopup="listbox"
+          aria-haspopup="dialog"
           aria-expanded={openMenu === "model"}
           aria-controls="composer-model-picker"
           title="选择当前会话使用的模型"
@@ -352,47 +464,70 @@ export default function ComposerTuningControls({
             </label>
 
             <div className="tuning-section-label">
-              全部可选模型 · {modelOptions.length}（含快捷项）
+              {isSearchingModels
+                ? `搜索结果 · ${matchingModelCount}`
+                : `模型供应商 · ${groupedModelOptions.length}`}
             </div>
-            <div className="tuning-option-list model-catalog-list" role="listbox" aria-label="CC Switch 模型库">
-              {groupedModelOptions.map((group) => (
-                <section className="model-provider-group" key={group.provider}>
-                  <div className="model-provider-heading">
-                    <ModelBrandIcon provider={group.provider} size={13} />
-                    <span>{modelProviderLabel(group.provider)}</span>
-                    <small>{group.options.length}</small>
-                  </div>
-                  {group.options.map((option) => {
-                    const selected = session.requestedModel === option.value;
-                    return (
+            <div className="tuning-option-list model-catalog-list" aria-label="CC Switch 模型库">
+              {followOption && (
+                <div className="model-follow-shortcut" role="group" aria-label="CC Switch 快捷选项">
+                  {renderModelOption(followOption, "model-follow-option")}
+                </div>
+              )}
+
+              {isSearchingModels ? (
+                <div className="model-search-results" role="group" aria-label="模型搜索结果">
+                  {groupedModelOptions.flatMap((group) =>
+                    group.options.map((option) => renderModelOption(option)),
+                  )}
+                  {!groupedModelOptions.length && (
+                    <div className="model-search-empty">
+                      没有匹配的模型；也可以在上方直接输入模型 ID。
+                    </div>
+                  )}
+                </div>
+              ) : (
+                groupedModelOptions.map((group) => {
+                  const expanded = expandedProvider === group.provider;
+                  const panelId = `composer-model-provider-${group.provider}`;
+                  const hasSelection = group.options.some(
+                    (option) => session.requestedModel === option.value,
+                  );
+                  return (
+                    <section
+                      className={`model-provider-group ${hasSelection ? "has-selection" : ""}`}
+                      key={group.provider}
+                    >
                       <button
                         type="button"
-                        className={`tuning-option model-option ${selected ? "selected" : ""}`}
-                        key={option.value || "follow"}
-                        data-value={option.value}
-                        onClick={() => void chooseModel(option.value)}
-                        role="option"
-                        aria-selected={selected}
+                        className={`model-provider-heading model-provider-trigger ${expanded ? "is-expanded" : ""}`}
+                        onClick={() =>
+                          setExpandedProvider((current) =>
+                            current === group.provider ? null : group.provider,
+                          )
+                        }
+                        onKeyDown={(event) => onProviderKeyDown(event, group.provider)}
+                        aria-expanded={expanded}
+                        aria-controls={panelId}
                       >
-                        <span className="model-option-mark">
-                          <ModelBrandIcon
-                            model={option.value}
-                            provider={option.provider}
-                            size={16}
-                          />
-                        </span>
-                        <span className="tuning-option-copy">
-                          <strong>{option.label}</strong>
-                          <small>{option.description}</small>
-                        </span>
-                        {selected && <Check size={16} className="option-check" />}
+                        <ModelBrandIcon provider={group.provider} size={13} />
+                        <span>{modelProviderLabel(group.provider)}</span>
+                        <small className="model-provider-count">{group.options.length}</small>
+                        <ChevronDown size={13} className="model-provider-chevron" />
                       </button>
-                    );
-                  })}
-                </section>
-              ))}
-              {!groupedModelOptions.length && (
-                <div className="model-search-empty">没有匹配的模型；也可以在上方直接输入模型 ID。</div>
+                      {expanded && (
+                        <div
+                          id={panelId}
+                          className="model-provider-options"
+                          role="group"
+                          aria-label={`${modelProviderLabel(group.provider)} 模型`}
+                        >
+                          {group.options.map((option) => renderModelOption(option))}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })
               )}
             </div>
 
@@ -416,6 +551,7 @@ export default function ComposerTuningControls({
 
       <div className="tuning-control-wrap effort-control-wrap">
         <button
+          ref={effortTriggerRef}
           type="button"
           className={`tuning-trigger ${openMenu === "effort" ? "is-open" : ""}`}
           onClick={() => toggleMenu("effort")}
@@ -439,7 +575,7 @@ export default function ComposerTuningControls({
             }
           }}
           disabled={disabled}
-          aria-haspopup="listbox"
+          aria-haspopup="dialog"
           aria-expanded={openMenu === "effort"}
           aria-controls="composer-effort-picker"
           title={effortInfo[session.effort].description}
@@ -472,7 +608,7 @@ export default function ComposerTuningControls({
               <span>更深入</span>
             </div>
 
-            <div className="tuning-option-list" role="listbox" aria-label="推理强度">
+            <div className="tuning-option-list" role="group" aria-label="推理强度">
               {(Object.entries(effortInfo) as [EffortLevel, (typeof effortInfo)[EffortLevel]][]).map(
                 ([value, info]) => {
                   const selected = session.effort === value;
@@ -483,8 +619,7 @@ export default function ComposerTuningControls({
                       key={value || "default"}
                       data-value={value}
                       onClick={() => void chooseEffort(value)}
-                      role="option"
-                      aria-selected={selected}
+                      aria-pressed={selected}
                     >
                       <EffortGlyph level={info.level} />
                       <span className="tuning-option-copy">
@@ -508,6 +643,7 @@ export default function ComposerTuningControls({
 
       <div className="tuning-control-wrap permission-control-wrap">
         <button
+          ref={permissionTriggerRef}
           type="button"
           className={`tuning-trigger ${openMenu === "permission" ? "is-open" : ""}`}
           onClick={() => toggleMenu("permission")}
@@ -518,7 +654,7 @@ export default function ComposerTuningControls({
             }
           }}
           disabled={disabled}
-          aria-haspopup="listbox"
+          aria-haspopup="dialog"
           aria-expanded={openMenu === "permission"}
           aria-controls="composer-permission-picker"
           title={modeInfo[session.permissionMode].description}
@@ -545,7 +681,7 @@ export default function ComposerTuningControls({
               </span>
             </div>
 
-            <div className="tuning-option-list permission-option-list" role="listbox" aria-label="权限模式">
+            <div className="tuning-option-list permission-option-list" role="group" aria-label="权限模式">
               {(Object.entries(modeInfo) as [PermissionMode, (typeof modeInfo)[PermissionMode]][]).map(
                 ([value, info]) => {
                   const selected = session.permissionMode === value;
@@ -557,8 +693,7 @@ export default function ComposerTuningControls({
                       key={value}
                       data-value={value}
                       onClick={() => void choosePermission(value)}
-                      role="option"
-                      aria-selected={selected}
+                      aria-pressed={selected}
                     >
                       <span className="permission-option-mark">
                         <Icon size={15} />

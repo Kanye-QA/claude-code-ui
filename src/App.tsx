@@ -9,8 +9,8 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  Menu,
   MessageSquareText,
+  Monitor,
   Moon,
   MoreHorizontal,
   PanelLeftClose,
@@ -45,9 +45,11 @@ import ClaudeMascotIcon, {
 } from "./components/ClaudeMascotIcon";
 import ComposerTuningControls, {
   commonModels,
+  EffortGlyph,
   effortInfo,
   modeInfo,
 } from "./components/ComposerTuningControls";
+import ConversationTimeline from "./components/ConversationTimeline";
 import ModelBrandIcon, { modelLabel } from "./components/ModelBrandIcon";
 import type {
   AppSettings,
@@ -79,6 +81,11 @@ const emptyState: AppState = {
 function tail(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.at(-1) || path || "选择项目";
+}
+
+function sameDirectory(left?: string, right?: string): boolean {
+  const normalize = (value = "") => value.replace(/[\\/]+$/, "").toLowerCase();
+  return Boolean(left && right && normalize(left) === normalize(right));
 }
 
 function relativeTime(value: string): string {
@@ -145,7 +152,11 @@ function MessageView({ message }: { message: ChatMessage }) {
 
   if (message.role === "user") {
     return (
-      <article className={`message user-message ${message.status === "queued" ? "queued-message" : ""}`}>
+      <article
+        id={`conversation-message-${message.id}`}
+        data-timeline-message-id={message.id}
+        className={`message user-message ${message.status === "queued" ? "queued-message" : ""}`}
+      >
         <div className="user-message-stack">
           <div className="user-bubble">{message.content}</div>
           {message.status === "queued" && (
@@ -175,7 +186,7 @@ function MessageView({ message }: { message: ChatMessage }) {
 
   const isEmptyStreaming = message.status === "streaming" && !message.content;
   return (
-      <article className="message assistant-message">
+      <article id={`conversation-message-${message.id}`} className="message assistant-message">
         <div className="assistant-avatar">
           <ClaudeMascotIcon />
       </div>
@@ -302,40 +313,73 @@ function SettingsPanel({
             </button>
           </div>
 
-          <div className="setting-group">
-            <label htmlFor="default-mode">默认权限模式</label>
-            <select
-              id="default-mode"
-              value={state.settings.defaultPermissionMode}
-              onChange={(event) =>
-                void onUpdate({ defaultPermissionMode: event.target.value as PermissionMode })
-              }
-            >
-              {Object.entries(modeInfo).map(([value, info]) => (
-                <option key={value} value={value}>
-                  {info.label} — {info.description}
-                </option>
-              ))}
-            </select>
-          </div>
+          <fieldset className="setting-group setting-choice-fieldset">
+            <legend>默认权限模式</legend>
+            <div className="setting-choice-grid permission-choice-grid">
+              {(Object.entries(modeInfo) as Array<
+                [PermissionMode, (typeof modeInfo)[PermissionMode]]
+              >).map(([value, info]) => {
+                const selected = state.settings.defaultPermissionMode === value;
+                const Icon = info.icon;
+                return (
+                  <label
+                    className={`setting-choice-card permission-choice-card ${selected ? "selected" : ""}`}
+                    key={value}
+                  >
+                    <input
+                      type="radio"
+                      name="default-permission-mode"
+                      value={value}
+                      checked={selected}
+                      onChange={() => void onUpdate({ defaultPermissionMode: value })}
+                    />
+                    <span className="setting-choice-icon">
+                      <Icon size={16} />
+                    </span>
+                    <span className="setting-choice-copy">
+                      <strong>{info.label}</strong>
+                      <small>{info.description}</small>
+                    </span>
+                    {selected && <Check size={14} className="setting-choice-check" />}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
 
-          <div className="setting-group">
-            <label htmlFor="default-effort">默认响应速度</label>
-            <select
-              id="default-effort"
-              value={state.settings.defaultEffort}
-              onChange={(event) =>
-                void onUpdate({ defaultEffort: event.target.value as EffortLevel })
-              }
-            >
-              {Object.entries(effortInfo).map(([value, info]) => (
-                <option key={value} value={value}>
-                  {info.label} — {info.description}
-                </option>
-              ))}
-            </select>
-            <p>这里控制的是思考强度；越快通常越省 Token，复杂任务可选“深入”。</p>
-          </div>
+          <fieldset className="setting-group setting-choice-fieldset">
+            <legend>默认响应速度</legend>
+            <div className="setting-choice-grid effort-choice-grid">
+              {(Object.entries(effortInfo) as Array<
+                [EffortLevel, (typeof effortInfo)[EffortLevel]]
+              >).map(([value, info]) => {
+                const selected = state.settings.defaultEffort === value;
+                return (
+                  <label
+                    className={`setting-choice-card effort-choice-card ${selected ? "selected" : ""}`}
+                    key={value || "auto"}
+                  >
+                    <input
+                      type="radio"
+                      name="default-effort"
+                      value={value}
+                      checked={selected}
+                      onChange={() => void onUpdate({ defaultEffort: value })}
+                    />
+                    <span className="setting-choice-icon effort-choice-icon">
+                      <EffortGlyph level={info.level} />
+                    </span>
+                    <span className="setting-choice-copy">
+                      <strong>{info.label}</strong>
+                      <small>{info.description}</small>
+                    </span>
+                    {selected && <Check size={14} className="setting-choice-check" />}
+                  </label>
+                );
+              })}
+            </div>
+            <p>控制新对话的思考投入，不是网络速度；越快通常越省 Token。</p>
+          </fieldset>
 
           <div className="setting-group">
             <label htmlFor="model">默认模型</label>
@@ -379,22 +423,33 @@ function SettingsPanel({
 
           <div className="setting-group">
             <label>外观</label>
-            <div className="theme-options">
+            <div className="theme-options" role="radiogroup" aria-label="外观主题">
               {(
                 [
-                  ["system", "跟随系统", Menu],
+                  ["system", "跟随系统", Monitor],
                   ["light", "浅色", Sun],
                   ["dark", "深色", Moon],
                 ] as const
               ).map(([value, label, Icon]) => (
                 <button
+                  type="button"
                   key={value}
                   className={state.settings.theme === value ? "selected" : ""}
                   onClick={() => void onUpdate({ theme: value })}
+                  role="radio"
+                  aria-checked={state.settings.theme === value}
                 >
-                  <Icon size={16} />
-                  {label}
-                  {state.settings.theme === value && <Check size={14} />}
+                  <span className={`theme-preview theme-preview-${value}`} aria-hidden="true">
+                    <i />
+                    <i />
+                  </span>
+                  <span className="theme-option-label">
+                    <Icon size={15} className="theme-option-icon" />
+                    {label}
+                  </span>
+                  {state.settings.theme === value && (
+                    <Check size={14} className="theme-option-check" />
+                  )}
                 </button>
               ))}
             </div>
@@ -473,10 +528,7 @@ function NewProjectDialog({
 
   const chooseFolder = async () => {
     const folder = await window.claudeUI.selectDirectory(cwd || defaultCwd);
-    if (folder) {
-      setCwd(folder);
-      if (!name.trim()) setName(tail(folder));
-    }
+    if (folder) setCwd(folder);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -488,7 +540,7 @@ function NewProjectDialog({
     setSaving(true);
     setError("");
     try {
-      await onCreate({ name: name.trim() || tail(cwd), cwd });
+      await onCreate({ name: name.trim(), cwd });
       onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -521,12 +573,12 @@ function NewProjectDialog({
         </header>
         <div className="dialog-form">
           <label>
-            项目名称
+            项目名称（可选）
             <input
               autoFocus
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="例如：网站改版"
+              placeholder="留空将根据项目文件自动识别"
             />
           </label>
           <label>
@@ -536,7 +588,9 @@ function NewProjectDialog({
               <span>{cwd || "选择文件夹"}</span>
             </button>
           </label>
-          <p className="dialog-hint">创建后会自动在这个项目下新建第一段会话。</p>
+          <p className="dialog-hint">
+            会优先读取 package.json、pyproject.toml、Git 等本地信息；若没有结果，发送首个任务后会按任务主题命名。
+          </p>
           {error && <p className="dialog-error">{error}</p>}
         </div>
         <footer className="dialog-actions">
@@ -577,13 +631,23 @@ export default function App() {
   const [balance, setBalance] = useState<BalanceStatus | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [toast, setToast] = useState<string>("");
+  const [activeTimelineMessageId, setActiveTimelineMessageId] = useState<string>();
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const conversationRef = useRef<HTMLElement>(null);
+  const followTailRef = useRef(true);
+  const previousScrollTopRef = useRef(0);
+  const scrollFrameRef = useRef<number | null>(null);
 
   const selected = state.sessions.find((session) => session.id === selectedId);
   const selectedProject = selected
     ? state.projects.find((project) => project.id === selected.projectId)
     : undefined;
+  const currentProjectName = selected
+    ? selectedProject && sameDirectory(selectedProject.cwd, selected.cwd)
+      ? selectedProject.name
+      : tail(selected.cwd)
+    : "";
   const active = selected ? state.activeSessionIds.includes(selected.id) : false;
   const queuedCount = selected
     ? selected.messages.filter(
@@ -648,23 +712,40 @@ export default function App() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     let dispose = () => {};
     void window.claudeUI
       .getState()
-      .then(async (next) => {
+      .then((next) => {
+        if (cancelled) return;
         setState(next);
-        const remembered = window.localStorage.getItem("selected-session");
-        if (remembered && next.sessions.some((session) => session.id === remembered)) {
-          setSelectedId(remembered);
-        } else if (next.sessions[0]) {
-          setSelectedId(next.sessions[0].id);
-        }
+        setSelectedId("");
+        window.localStorage.removeItem("selected-session");
       })
-      .catch(reportError);
+      .catch((error) => {
+        if (!cancelled) reportError(error);
+      });
     dispose = window.claudeUI.onStateChanged((next) => setState(next));
-    void window.claudeUI.claudeStatus().then(setClaudeStatus).catch(reportError);
-    void window.claudeUI.getModelCatalog().then(setModelCatalog).catch(() => setModelCatalog([]));
-    return () => dispose();
+    void window.claudeUI
+      .claudeStatus()
+      .then((status) => {
+        if (!cancelled) setClaudeStatus(status);
+      })
+      .catch((error) => {
+        if (!cancelled) reportError(error);
+      });
+    void window.claudeUI
+      .getModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) setModelCatalog(catalog);
+      })
+      .catch(() => {
+        if (!cancelled) setModelCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+      dispose();
+    };
   }, []);
 
   useEffect(() => {
@@ -673,10 +754,6 @@ export default function App() {
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, []);
-
-  useEffect(() => {
-    if (selectedId) window.localStorage.setItem("selected-session", selectedId);
-  }, [selectedId]);
 
   useEffect(() => {
     if (selectedId && !state.sessions.some((session) => session.id === selectedId)) {
@@ -696,8 +773,95 @@ export default function App() {
   }, [state.settings.theme]);
 
   useEffect(() => {
+    followTailRef.current = true;
+    previousScrollTopRef.current = 0;
+    setActiveTimelineMessageId(undefined);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!followTailRef.current) return;
     endRef.current?.scrollIntoView({ behavior: active ? "auto" : "smooth" });
+    const lastUserMessage = selected?.messages.filter((message) => message.role === "user").at(-1);
+    if (lastUserMessage) setActiveTimelineMessageId(lastUserMessage.id);
   }, [active, selected?.messages]);
+
+  useEffect(() => {
+    const root = conversationRef.current;
+    if (!root || !selected?.messages.length) {
+      setActiveTimelineMessageId(undefined);
+      return;
+    }
+
+    const anchors = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-timeline-message-id]"),
+    );
+    previousScrollTopRef.current = root.scrollTop;
+
+    const updateTimelinePosition = () => {
+      scrollFrameRef.current = null;
+      const previousScrollTop = previousScrollTopRef.current;
+      const nextScrollTop = root.scrollTop;
+      const scrollDelta = nextScrollTop - previousScrollTop;
+      previousScrollTopRef.current = nextScrollTop;
+      const remaining = root.scrollHeight - root.scrollTop - root.clientHeight;
+      const scrollable = root.scrollHeight - root.clientHeight > 2;
+      const movingUp = scrollDelta < -0.5;
+      const movingDown = scrollDelta > 0.5;
+      const atTail = !scrollable || remaining <= 8;
+
+      if (movingUp) {
+        followTailRef.current = false;
+      } else if (!scrollable || (movingDown && atTail)) {
+        followTailRef.current = true;
+      }
+
+      const markerTop = root.getBoundingClientRect().top + Math.min(160, root.clientHeight * 0.28);
+      if (!scrollable) {
+        setActiveTimelineMessageId(anchors.at(-1)?.dataset.timelineMessageId);
+        return;
+      }
+      let currentId = anchors[0]?.dataset.timelineMessageId;
+      if (followTailRef.current) {
+        currentId = anchors.at(-1)?.dataset.timelineMessageId;
+      } else {
+        let low = 0;
+        let high = anchors.length - 1;
+        while (low <= high) {
+          const middle = Math.floor((low + high) / 2);
+          if (anchors[middle].getBoundingClientRect().top <= markerTop) {
+            currentId = anchors[middle].dataset.timelineMessageId;
+            low = middle + 1;
+          } else {
+            high = middle - 1;
+          }
+        }
+      }
+      setActiveTimelineMessageId((current) =>
+        current === currentId ? current : currentId,
+      );
+    };
+
+    const onScroll = () => {
+      if (scrollFrameRef.current !== null) return;
+      scrollFrameRef.current = window.requestAnimationFrame(updateTimelinePosition);
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0 && root.scrollHeight - root.clientHeight > 2) {
+        followTailRef.current = false;
+      }
+    };
+    root.addEventListener("scroll", onScroll, { passive: true });
+    root.addEventListener("wheel", onWheel, { passive: true });
+    onScroll();
+    return () => {
+      root.removeEventListener("scroll", onScroll);
+      root.removeEventListener("wheel", onWheel);
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [selected?.id, selected?.messages.length]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -745,7 +909,13 @@ export default function App() {
   const createProject = async (input: Pick<Project, "name" | "cwd">) => {
     try {
       const project = await window.claudeUI.createProject(input);
-      await createSession(project);
+      const session = await window.claudeUI.createSession({
+        projectId: project.id,
+        cwd: project.cwd,
+      });
+      setSelectedId(session.id);
+      setDraft("");
+      requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (error) {
       reportError(error);
       throw error;
@@ -793,9 +963,28 @@ export default function App() {
     }
   };
 
+  const scrollToTimelineMessage = (messageId: string) => {
+    const root = conversationRef.current;
+    const target = document.getElementById(`conversation-message-${messageId}`);
+    if (!root || !target || !root.contains(target)) return;
+    setActiveTimelineMessageId(messageId);
+    const requestedTop =
+      root.scrollTop +
+      target.getBoundingClientRect().top -
+      root.getBoundingClientRect().top -
+      24;
+    const maximumTop = Math.max(0, root.scrollHeight - root.clientHeight);
+    const top = Math.min(maximumTop, Math.max(0, requestedTop));
+    followTailRef.current = maximumTop - top <= 2;
+    previousScrollTopRef.current = root.scrollTop;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    root.scrollTo({ top, behavior: reducedMotion ? "auto" : "smooth" });
+  };
+
   const send = async () => {
     if (!selected || !draft.trim()) return;
     const prompt = draft;
+    followTailRef.current = true;
     setDraft("");
     try {
       await window.claudeUI.sendMessage(selected.id, prompt);
@@ -870,16 +1059,6 @@ export default function App() {
     ) {
       event.preventDefault();
       void send();
-    }
-  };
-
-  const chooseFolder = async () => {
-    if (!selected || active) return;
-    try {
-      const folder = await window.claudeUI.selectDirectory(selected.cwd);
-      if (folder) await window.claudeUI.updateSession(selected.id, { cwd: folder });
-    } catch (error) {
-      reportError(error);
     }
   };
 
@@ -1130,10 +1309,13 @@ export default function App() {
               <strong>Claude Code UI</strong>
             )}
             {selected && (
-              <button className="folder-chip" onClick={chooseFolder} disabled={active}>
+              <div
+                className="folder-chip current-project-chip"
+                title={`当前项目：${currentProjectName}\n工作目录：${selected.cwd}`}
+              >
                 <Folder size={13} />
-                {tail(selectedProject?.cwd || selected.cwd)}
-              </button>
+                {currentProjectName}
+              </div>
             )}
           </div>
           <div className="topbar-actions">
@@ -1155,32 +1337,38 @@ export default function App() {
           </div>
         </header>
 
-        <section className="conversation">
-          {selected?.messages.length ? (
-            <div className="message-column">
-              {selected.messages.map((message) => (
-                <MessageView key={message.id} message={message} />
-              ))}
-              <div ref={endRef} />
-            </div>
-          ) : (
-            <div className="empty-conversation">
+        <div className="conversation-stage">
+          <section className="conversation" ref={conversationRef}>
+            {selected?.messages.length ? (
+              <div className="message-column">
+                {selected.messages.map((message) => (
+                  <MessageView key={message.id} message={message} />
+                ))}
+                <div ref={endRef} />
+              </div>
+            ) : (
+              <div className="empty-conversation">
               <div className="hero-mark">
                 <ClaudeMascotIcon />
               </div>
-              <h1>{selected ? "今天想做点什么？" : "从一个项目开始"}</h1>
+              <h1>
+                {selected ? `想在「${currentProjectName}」中做些什么？` : "今天想做点什么？"}
+              </h1>
               <p>
                 {selected
-                  ? "Claude Code 已通过 CC Switch 接入。选择项目文件夹，然后像聊天一样描述任务。"
-                  : "项目会集中保存同一文件夹下的会话，让每个任务都有清晰的上下文。"}
+                  ? "Claude Code 会以这个项目目录为范围读取和修改文件。"
+                  : "先选择或新建一个项目，再像聊天一样描述任务；历史项目仍保留在左侧。"}
               </p>
-              {!selected ? (
-                <button className="empty-project-button" onClick={() => setProjectDialogOpen(true)}>
-                  <FolderPlus size={17} />
-                  新建第一个项目
-                </button>
-              ) : (
-                <div className="quick-actions">
+              {selected && (
+                <div className="project-context-path" title={selected.cwd}>
+                  <FolderOpen size={15} />
+                  <span>
+                    <small>当前工作目录</small>
+                    <code>{selected.cwd}</code>
+                  </span>
+                </div>
+              )}
+              <div className="quick-actions">
                 {(
                   [
                     ["解释这个项目", "先浏览当前项目，告诉我它的结构、用途和启动方式。", "explain"],
@@ -1188,7 +1376,12 @@ export default function App() {
                     ["实现新功能", "请阅读当前项目，并帮我实现下面这个功能：", "build"],
                   ] satisfies Array<[string, string, ClaudeMascotVariant]>
                 ).map(([label, prompt, variant]) => (
-                  <button key={label} onClick={() => setDraft(prompt)}>
+                  <button
+                    key={label}
+                    onClick={() =>
+                      selected ? setDraft(prompt) : setProjectDialogOpen(true)
+                    }
+                  >
                     <ClaudeMascotIcon variant={variant} />
                     <span>
                       <strong>{label}</strong>
@@ -1196,11 +1389,24 @@ export default function App() {
                     </span>
                   </button>
                 ))}
-                </div>
+              </div>
+              {!selected && (
+                <button className="empty-project-button" onClick={() => setProjectDialogOpen(true)}>
+                  <FolderPlus size={17} />
+                  新建项目
+                </button>
               )}
-            </div>
-          )}
-        </section>
+              </div>
+            )}
+          </section>
+          {selected?.messages.length ? (
+            <ConversationTimeline
+              messages={selected.messages}
+              activeMessageId={activeTimelineMessageId}
+              onSelect={scrollToTimelineMessage}
+            />
+          ) : null}
+        </div>
 
         <div className="composer-zone">
           <div className={`composer ${active ? "composer-active" : ""}`}>
@@ -1212,9 +1418,11 @@ export default function App() {
               onKeyDown={onComposerKeyDown}
               onContextMenu={(event) => void openComposerContextMenu(event)}
               placeholder={
-                active
-                  ? "继续输入补充要求，当前任务完成后会自动发送…"
-                  : "给 Claude Code 发送消息"
+                !selected
+                  ? "请先新建或选择项目"
+                  : active
+                    ? `继续补充「${currentProjectName}」中的任务要求…`
+                    : `想在「${currentProjectName}」中做些什么？`
               }
               rows={1}
             />
@@ -1222,12 +1430,16 @@ export default function App() {
               <div>
                 <button
                   className="toolbar-project"
-                  onClick={chooseFolder}
-                  disabled={!selected || active}
-                  title="选择项目文件夹"
+                  onClick={() => setProjectDialogOpen(true)}
+                  disabled={!selected}
+                  title={
+                    selected
+                      ? `当前项目：${currentProjectName}\n工作目录：${selected.cwd}\n点击新建另一个项目`
+                      : "请先新建项目"
+                  }
                 >
                   <FolderOpen size={17} />
-                  <span>{selected ? tail(selected.cwd) : "项目"}</span>
+                  <span>{selected ? currentProjectName : "项目"}</span>
                 </button>
                 {selected && (
                   <ComposerTuningControls

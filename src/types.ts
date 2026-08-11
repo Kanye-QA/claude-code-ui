@@ -1,6 +1,7 @@
 export type PermissionMode = "plan" | "auto" | "acceptEdits" | "dontAsk";
 export type EffortLevel = "" | "low" | "medium" | "high" | "xhigh" | "max";
 export type MessageStatus = "queued" | "streaming" | "complete" | "error" | "stopped";
+export type ProjectNameSource = "directory" | "metadata" | "task" | "user";
 
 export interface ContextUsage {
   inputTokens: number;
@@ -29,6 +30,7 @@ export interface ChatMessage {
   error?: string;
   costUsd?: number;
   durationMs?: number;
+  topic?: string;
 }
 
 export interface ChatSession {
@@ -55,6 +57,7 @@ export interface Project {
   cwd: string;
   createdAt: string;
   updatedAt: string;
+  nameSource?: ProjectNameSource;
 }
 
 export interface AppSettings {

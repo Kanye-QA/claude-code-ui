@@ -69,7 +69,7 @@ const providerLabels: Record<ModelIconKind, string> = {
   follow: "CC Switch",
   anthropic: "Anthropic / Claude",
   deepseek: "DeepSeek",
-  openai: "OpenAI / Codex",
+  openai: "OpenAI / GPT / Codex",
   gemini: "Google Gemini",
   qwen: "阿里云 Qwen",
   zhipu: "智谱 GLM",
