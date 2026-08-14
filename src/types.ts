@@ -122,6 +122,18 @@ export interface VisionKeyStatus {
   configured: boolean;
 }
 
+export interface UpdateCheckResult {
+  status: "current" | "available" | "error";
+  currentVersion: string;
+  latestVersion?: string;
+  releaseName?: string;
+  releaseUrl?: string;
+  downloadUrl?: string;
+  publishedAt?: string;
+  notes?: string;
+  error?: string;
+}
+
 export interface ClaudeUIApi {
   getState(): Promise<AppState>;
   getModelCatalog(): Promise<ModelCatalogEntry[]>;
@@ -144,6 +156,7 @@ export interface ClaudeUIApi {
   queryBalance(): Promise<BalanceStatus>;
   getVisionKeyStatus(): Promise<VisionKeyStatus>;
   setVisionApiKey(value: string): Promise<VisionKeyStatus>;
+  checkForUpdates(): Promise<UpdateCheckResult>;
   readClipboard(): Promise<string>;
   writeClipboard(text: string): Promise<boolean>;
   getScreenSources(): Promise<ScreenSource[]>;

@@ -6,7 +6,7 @@
 
 [![最新正式版](https://img.shields.io/github/v/release/Kanye-QA/claude-code-ui?label=%E6%9C%80%E6%96%B0%E6%AD%A3%E5%BC%8F%E7%89%88)](https://github.com/Kanye-QA/claude-code-ui/releases/latest)
 
-**当前版本：5.1**  ·  [下载 Windows 便携版（Claude-Code-UI-5.1-portable.exe）](https://github.com/Kanye-QA/claude-code-ui/releases/download/v5.1/Claude-Code-UI-5.1-portable.exe)
+**当前版本：5.2**  ·  [下载 Windows 便携版（Claude-Code-UI-5.2-portable.exe）](https://github.com/Kanye-QA/claude-code-ui/releases/download/v5.2/Claude-Code-UI-5.2-portable.exe)
 
 下载后双击即可运行，不需要安装 Node.js。旧版本和完整说明都保留在 [Releases](https://github.com/Kanye-QA/claude-code-ui/releases)。
 
@@ -17,6 +17,12 @@
 > 模型菜单中的品牌图标仅用于识别供应商，不代表任何厂商的合作或背书；图标来源与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 更新摘要
+
+### 5.2 正式版
+
+- 修复首页截图按钮无响应：刚打开应用、尚未选择会话时也可以打开截图与智谱 Key 流程；创建会话后即可发送已附加的截图。
+- 设置页新增主题化“检查更新”：手动查询 GitHub Releases，显示当前/最新版本和更新摘要，可打开发布页下载，不会自动替换当前程序。
+- 左侧工作栏重新调整层级和对比度：项目使用自然的深色容器，会话缩进显示，选中态、悬停态、图标和分隔线更清晰，同时保留项目折叠/展开。
 
 ### 5.1 正式版
 
@@ -80,13 +86,13 @@
 
 ## 使用便携版
 
-从 GitHub Releases 下载 5.1 正式版 `Claude-Code-UI-5.1-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
+从 GitHub Releases 下载 5.2 正式版 `Claude-Code-UI-5.2-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
 
 首次运行若出现 Windows SmartScreen 提示，请先核对下载来源和 Release 页 SHA-256。当前社区构建没有商业代码签名；提示不等于已检测到病毒，也不要求必须上架 Microsoft Store，但不建议关闭 Defender 或 Smart App Control。
 
 ## 基本使用
 
-1. 打开 Claude Code UI。
+1. 打开 Claude Code UI 5.2。
 2. 点击左侧“新建项目”并选择项目目录；名称可留空，由应用根据本地项目信息自动识别。创建后点击项目右侧“+”或“新建第一段会话”开始对话。
 3. 未选择项目时可在“未归类对话”区域新建独立会话；项目和会话标题旁的铅笔都可直接重命名。
 4. 输入任务并按 Enter 发送；Shift + Enter 换行。

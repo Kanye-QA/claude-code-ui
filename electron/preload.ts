@@ -22,6 +22,7 @@ const api = {
   queryBalance: () => ipcRenderer.invoke("balance:query"),
   getVisionKeyStatus: () => ipcRenderer.invoke("vision:key-status"),
   setVisionApiKey: (value: string) => ipcRenderer.invoke("vision:key:set", value),
+  checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   readClipboard: () => ipcRenderer.invoke("clipboard:readText"),
   writeClipboard: (text: string) => ipcRenderer.invoke("clipboard:writeText", text),
   getScreenSources: () => ipcRenderer.invoke("screen:sources"),

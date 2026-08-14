@@ -119,6 +119,18 @@ interface BalanceStatus {
   error?: string;
 }
 
+interface UpdateCheckResult {
+  status: "current" | "available" | "error";
+  currentVersion: string;
+  latestVersion?: string;
+  releaseName?: string;
+  releaseUrl?: string;
+  downloadUrl?: string;
+  publishedAt?: string;
+  notes?: string;
+  error?: string;
+}
+
 interface ModelCatalogEntry {
   id: string;
   name: string;
@@ -150,6 +162,7 @@ let saveTimer: NodeJS.Timeout | null = null;
 const previewMode = process.env.CLAUDE_UI_MOCK === "1";
 const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
 const DEFAULT_VISION_MODEL = "glm-4v-flash";
+const LATEST_RELEASE_URL = "https://api.github.com/repos/Kanye-QA/claude-code-ui/releases/latest";
 const MAX_QUEUED_MESSAGES = 20;
 
 const effortLevels: EffortLevel[] = ["", "low", "medium", "high", "xhigh", "max"];
@@ -693,6 +706,91 @@ function resolveZhipuApiKey(): string | undefined {
       "GLM_API_KEY",
     ]) ?? readStoredVisionApiKey()
   );
+}
+
+function normalizeReleaseVersion(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = value.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i);
+  if (!match) return undefined;
+  return `${match[1]}.${match[2] ?? "0"}.${match[3] ?? "0"}`;
+}
+
+function compareReleaseVersions(left: string, right: string): number {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] > rightParts[index] ? 1 : -1;
+  }
+  return 0;
+}
+
+function trustedGitHubUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.hostname !== "github.com") return undefined;
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+async function checkForUpdates(): Promise<UpdateCheckResult> {
+  const currentVersion = normalizeReleaseVersion(app.getVersion()) ?? app.getVersion();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(LATEST_RELEASE_URL, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": `Claude-Code-UI/${currentVersion}`,
+      },
+      signal: controller.signal,
+    });
+    const payload = (await response.json()) as {
+      tag_name?: unknown;
+      name?: unknown;
+      html_url?: unknown;
+      body?: unknown;
+      published_at?: unknown;
+      assets?: Array<{ name?: unknown; browser_download_url?: unknown }>;
+      message?: unknown;
+    };
+    if (!response.ok) {
+      const detail = typeof payload.message === "string" ? payload.message : `HTTP ${response.status}`;
+      throw new Error(`GitHub 暂时无法返回版本信息：${detail}`);
+    }
+    const latestVersion = normalizeReleaseVersion(payload.tag_name);
+    const releaseUrl = trustedGitHubUrl(payload.html_url);
+    if (!latestVersion || !releaseUrl) throw new Error("GitHub 返回的版本信息格式不完整。");
+    const asset = (payload.assets ?? []).find(
+      (item) =>
+        typeof item.name === "string" &&
+        /^Claude-Code-UI-.*-portable\.exe$/i.test(item.name) &&
+        trustedGitHubUrl(item.browser_download_url),
+    );
+    const downloadUrl = asset ? trustedGitHubUrl(asset.browser_download_url) : undefined;
+    const notes = typeof payload.body === "string" ? payload.body.trim().slice(0, 2_400) : undefined;
+    return {
+      status: compareReleaseVersions(latestVersion, currentVersion) > 0 ? "available" : "current",
+      currentVersion,
+      latestVersion,
+      releaseName: typeof payload.name === "string" ? payload.name : `Claude Code UI ${latestVersion}`,
+      releaseUrl,
+      downloadUrl,
+      publishedAt: typeof payload.published_at === "string" ? payload.published_at : undefined,
+      notes,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: "error",
+      currentVersion,
+      error: message.includes("aborted") ? "检查超时，请稍后重试。" : message,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function isDirectVisionModel(value: string): boolean {
@@ -1692,6 +1790,7 @@ function registerIpc(): void {
     saveVisionApiKey(rawValue);
     return { configured: Boolean(resolveZhipuApiKey()) };
   });
+  ipcMain.handle("updates:check", () => checkForUpdates());
   ipcMain.handle("clipboard:readText", () => clipboard.readText());
   ipcMain.handle("clipboard:writeText", (_event, value: unknown) => {
     clipboard.writeText(typeof value === "string" ? value : String(value ?? ""));

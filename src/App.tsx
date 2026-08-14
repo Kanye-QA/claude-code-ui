@@ -8,6 +8,7 @@ import {
   Clock3,
   Copy,
   CornerDownRight,
+  Download,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -66,6 +67,7 @@ import type {
   PermissionMode,
   Project,
   ScreenSource,
+  UpdateCheckResult,
 } from "./types";
 
 const emptyState: AppState = {
@@ -276,10 +278,27 @@ function SettingsPanel({
   const [model, setModel] = useState(state.settings.requestedModel);
   const [visionModel, setVisionModel] = useState(state.settings.visionModel);
   const [claudePath, setClaudePath] = useState(state.settings.claudePath);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheckResult | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   const chooseDefaultFolder = async () => {
     const folder = await window.claudeUI.selectDirectory(state.settings.defaultCwd);
     if (folder) await onUpdate({ defaultCwd: folder });
+  };
+
+  const checkForUpdates = async () => {
+    setCheckingUpdate(true);
+    try {
+      setUpdateCheck(await window.claudeUI.checkForUpdates());
+    } catch (reason) {
+      setUpdateCheck({
+        status: "error",
+        currentVersion: "当前版本",
+        error: reason instanceof Error ? reason.message : String(reason),
+      });
+    } finally {
+      setCheckingUpdate(false);
+    }
   };
 
   return (
@@ -312,6 +331,56 @@ function SettingsPanel({
                 {claudeStatus?.path && <code>{claudeStatus.path}</code>}
               </div>
             </div>
+          </div>
+
+          <div className="setting-group">
+            <label>应用更新</label>
+            <div className="update-check-card">
+              <div className="update-check-copy">
+                <strong>检查 Claude Code UI 更新</strong>
+                <span>只查询 GitHub Releases，不会自动替换当前程序。</span>
+              </div>
+              <button
+                type="button"
+                className="update-check-button"
+                onClick={() => void checkForUpdates()}
+                disabled={checkingUpdate}
+              >
+                <RefreshCw size={13} className={checkingUpdate ? "spin" : ""} />
+                {checkingUpdate ? "检查中" : "检查更新"}
+              </button>
+            </div>
+            {updateCheck && (
+              <div className={`update-result update-result-${updateCheck.status}`}>
+                <div className="update-result-heading">
+                  {updateCheck.status === "available" ? <Download size={14} /> : <Check size={14} />}
+                  <strong>
+                    {updateCheck.status === "available"
+                      ? `发现新版本 ${updateCheck.latestVersion}`
+                      : updateCheck.status === "current"
+                        ? `已是最新版本（${updateCheck.currentVersion}）`
+                        : "检查更新失败"}
+                  </strong>
+                </div>
+                {updateCheck.status === "available" && updateCheck.releaseName && (
+                  <p>{updateCheck.releaseName}</p>
+                )}
+                {updateCheck.status === "available" && updateCheck.notes && (
+                  <pre>{updateCheck.notes}</pre>
+                )}
+                {updateCheck.status === "error" && <p>{updateCheck.error || "请稍后重试。"}</p>}
+                {updateCheck.status === "available" && updateCheck.releaseUrl && (
+                  <button
+                    type="button"
+                    className="update-result-link"
+                    onClick={() => void window.claudeUI.openExternal(updateCheck.releaseUrl!)}
+                  >
+                    <Download size={13} />
+                    打开发布页下载
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="setting-group">
@@ -879,6 +948,7 @@ export default function App() {
   const followTailRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
+  const preserveScreenshotRef = useRef(false);
 
   const selected = state.sessions.find((session) => session.id === selectedId);
   const selectedProject = selected
@@ -1038,7 +1108,8 @@ export default function App() {
     followTailRef.current = true;
     previousScrollTopRef.current = 0;
     setActiveTimelineMessageId(undefined);
-    setScreenshotAttachment(null);
+    if (preserveScreenshotRef.current) preserveScreenshotRef.current = false;
+    else setScreenshotAttachment(null);
   }, [selectedId]);
 
   useEffect(
@@ -1163,6 +1234,7 @@ export default function App() {
           ? { projectId: project.id, cwd: project.cwd }
           : { cwd: state.settings.defaultCwd || undefined },
       );
+      if (screenshotAttachment) preserveScreenshotRef.current = true;
       setSelectedId(session.id);
       setDraft("");
       requestAnimationFrame(() => textareaRef.current?.focus());
@@ -1174,6 +1246,7 @@ export default function App() {
   const createProject = async (input: Pick<Project, "name" | "cwd">) => {
     try {
       const project = await window.claudeUI.createProject(input);
+      if (screenshotAttachment) preserveScreenshotRef.current = true;
       setSelectedId("");
       setDraft("");
       setCollapsedProjects((current) => ({ ...current, [project.id]: false }));
@@ -1777,8 +1850,7 @@ export default function App() {
                   type="button"
                   className="toolbar-screenshot"
                   onClick={() => void openScreenCapture()}
-                  disabled={!selected}
-                  title="截图并附加（Ctrl + Shift + 4）"
+                  title={selected ? "截图并附加（Ctrl + Shift + 4）" : "先截图；新建会话后即可发送（Ctrl + Shift + 4）"}
                   aria-label="截图并附加"
                 >
                   <Camera size={15} />
