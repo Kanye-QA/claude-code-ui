@@ -3250,6 +3250,49 @@ summary:focus-visible {
   text-decoration: underline;
 }
 
+.permission-notice-dialog {
+  width: min(500px, 100%);
+}
+
+.permission-notice-content {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px 6px;
+}
+
+.permission-notice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 78%, var(--panel));
+}
+
+.permission-notice-item > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--accent-strong);
+}
+
+.permission-notice-item strong {
+  display: block;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.permission-notice-item p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.permission-notice-content .dialog-error {
+  margin: 0;
+}
+
 .confirm-dialog {
   padding-top: 20px;
 }
@@ -4194,6 +4237,217 @@ summary:focus-visible {
 .toolbar-screenshot:disabled {
   cursor: default;
   opacity: 0.45;
+}
+
+.composer-attach-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.toolbar-attach,
+.toolbar-voice {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease,
+    transform 120ms ease;
+}
+
+.toolbar-attach:hover,
+.toolbar-attach.active,
+.toolbar-voice:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-soft));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.toolbar-attach:focus-visible,
+.toolbar-voice:focus-visible,
+.composer-attach-menu button:focus-visible,
+.composer-file-attachment button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, white 8%);
+  outline-offset: 1px;
+}
+
+.toolbar-voice.listening {
+  border-color: color-mix(in srgb, var(--red) 60%, var(--border));
+  background: color-mix(in srgb, var(--red) 17%, var(--surface));
+  color: var(--red);
+  animation: voice-pulse 1.15s ease-in-out infinite;
+}
+
+.voice-live-meter {
+  display: inline-flex;
+  min-width: 106px;
+  height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--red) 34%, var(--border-soft));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--red) 8%, var(--surface));
+  color: color-mix(in srgb, var(--red) 78%, var(--text-soft));
+}
+
+.voice-live-label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.voice-wave {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  gap: 2px;
+}
+
+.voice-wave-bar {
+  display: block;
+  width: 2px;
+  min-height: 4px;
+  border-radius: 999px;
+  background: var(--red);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--red) 28%, transparent);
+  transition: height 70ms ease-out;
+  animation: voice-wave 620ms ease-in-out infinite alternate;
+}
+
+.composer-attach-menu {
+  position: absolute;
+  z-index: 22;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  min-width: 172px;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, var(--accent) 14%);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel) 96%, black 4%);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.38);
+  animation: context-menu-in 120ms ease-out;
+}
+
+.composer-attach-menu button {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-attach-menu button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.composer-attach-menu button svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.composer-file-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 9px 2px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.composer-file-attachment {
+  display: inline-flex;
+  max-width: min(250px, 100%);
+  min-height: 27px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--panel));
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.composer-file-attachment > svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.composer-file-attachment span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-file-attachment button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.composer-file-attachment button:hover {
+  background: var(--surface-hover);
+  color: var(--red);
+}
+
+.composer-voice-error {
+  margin: 3px 9px 0;
+  color: var(--red);
+  font-size: 10px;
+}
+
+.file-attachment-note {
+  padding: 3px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 75%, var(--panel));
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 18%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 12%, transparent);
+  }
+}
+
+@keyframes voice-wave {
+  from {
+    transform: scaleY(0.52);
+    opacity: 0.62;
+  }
+
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }
 
 .composer-attachment {

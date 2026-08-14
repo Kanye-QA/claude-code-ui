@@ -10,8 +10,8 @@ const api = {
   updateSession: (id: string, patch: unknown) =>
     ipcRenderer.invoke("session:update", id, patch),
   deleteSession: (id: string) => ipcRenderer.invoke("session:delete", id),
-  sendMessage: (id: string, prompt: string, screenshotPath?: string) =>
-    ipcRenderer.invoke("chat:send", id, prompt, screenshotPath),
+  sendMessage: (id: string, prompt: string, screenshotPath?: string, attachments?: unknown[]) =>
+    ipcRenderer.invoke("chat:send", id, prompt, screenshotPath, attachments),
   stopMessage: (id: string) => ipcRenderer.invoke("chat:stop", id),
   updateSettings: (patch: unknown) => ipcRenderer.invoke("settings:update", patch),
   selectDirectory: (initialPath?: string) =>
@@ -23,6 +23,7 @@ const api = {
   getVisionKeyStatus: () => ipcRenderer.invoke("vision:key-status"),
   setVisionApiKey: (value: string) => ipcRenderer.invoke("vision:key:set", value),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  selectAttachments: (kind: "file" | "project") => ipcRenderer.invoke("dialog:attachments", kind),
   readClipboard: () => ipcRenderer.invoke("clipboard:readText"),
   writeClipboard: (text: string) => ipcRenderer.invoke("clipboard:writeText", text),
   getScreenSources: () => ipcRenderer.invoke("screen:sources"),

@@ -9,11 +9,15 @@ import {
   Copy,
   CornerDownRight,
   Download,
+  FileText,
   Folder,
   FolderOpen,
   FolderPlus,
+  Globe2,
   KeyRound,
   MessageSquareText,
+  Mic,
+  MicOff,
   Monitor,
   Moon,
   MoreHorizontal,
@@ -25,6 +29,7 @@ import {
   Search,
   Send,
   Settings,
+  ShieldCheck,
   Square,
   Sun,
   TextSelect,
@@ -38,6 +43,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -61,6 +67,7 @@ import type {
   BalanceStatus,
   ChatMessage,
   ChatSession,
+  ChatAttachment,
   ClaudeStatus,
   EffortLevel,
   ModelCatalogEntry,
@@ -143,6 +150,29 @@ function balanceHint(balance: BalanceStatus | null): string {
   return `${balance.provider}：${details}。自动查询已开启，点击可手动刷新。`;
 }
 
+interface SpeechRecognitionResultLike {
+  isFinal: boolean;
+  0: { transcript: string };
+}
+
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: { length: number; [index: number]: SpeechRecognitionResultLike };
+}
+
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
 function MessageView({ message }: { message: ChatMessage }) {
   const [copied, setCopied] = useState(false);
   const copyMessage = async () => {
@@ -169,6 +199,12 @@ function MessageView({ message }: { message: ChatMessage }) {
                 : "已附加截图"}
             </div>
           )}
+          {message.attachments?.map((attachment) => (
+            <div className="message-attachment-note file-attachment-note" key={`${attachment.kind}-${attachment.path}`}>
+              {attachment.kind === "project" ? <FolderOpen size={12} /> : <FileText size={12} />}
+              {attachment.kind === "project" ? `已附加项目：${attachment.name}` : `已附加文件：${attachment.name}`}
+            </div>
+          ))}
           {message.status === "queued" && (
             <div className="queued-note">
               <Clock3 size={11} /> 等待当前任务完成后自动发送
@@ -795,6 +831,85 @@ function VisionKeyDialog({
   );
 }
 
+function PermissionNoticeDialog({
+  onClose,
+  onGranted,
+}: {
+  onClose(): void;
+  onGranted(): void;
+}) {
+  const [requesting, setRequesting] = useState(false);
+  const [error, setError] = useState("");
+
+  const requestMicrophone = async () => {
+    setRequesting(true);
+    setError("");
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("当前系统没有可用的麦克风权限接口。");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      onGranted();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "麦克风权限未授予，请稍后在系统设置中允许。");
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose}>
+      <section
+        className="theme-dialog permission-notice-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="permission-notice-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="dialog-header">
+          <div className="dialog-icon">
+            <ShieldCheck size={18} />
+          </div>
+          <div>
+            <p className="eyebrow">首次使用提示</p>
+            <h2 id="permission-notice-title">授权工作台能力</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="permission-notice-content">
+          <div className="permission-notice-item">
+            <Mic size={17} />
+            <div>
+              <strong>麦克风</strong>
+              <p>语音转文字只在你点击语音按钮或本次授权时使用，停止后会立即释放麦克风。</p>
+            </div>
+          </div>
+          <div className="permission-notice-item">
+            <Globe2 size={17} />
+            <div>
+              <strong>网络连接</strong>
+              <p>模型、截图识别和检查更新只发起必要的 HTTPS 出站请求，不监听入站端口。</p>
+            </div>
+          </div>
+          {error && <p className="dialog-error">{error}</p>}
+        </div>
+        <footer className="dialog-actions">
+          <button className="dialog-secondary" type="button" onClick={onClose} disabled={requesting}>
+            稍后设置
+          </button>
+          <button className="dialog-primary" type="button" onClick={() => void requestMicrophone()} disabled={requesting}>
+            <Mic size={14} />
+            {requesting ? "正在请求权限" : "允许麦克风并继续"}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function ScreenCaptureDialog({
   onClose,
   onCaptured,
@@ -920,10 +1035,16 @@ export default function App() {
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [screenCaptureOpen, setScreenCaptureOpen] = useState(false);
   const [visionKeyDialogOpen, setVisionKeyDialogOpen] = useState(false);
+  const [permissionNoticeOpen, setPermissionNoticeOpen] = useState(false);
   const [screenshotAttachment, setScreenshotAttachment] = useState<{
     path: string;
     dataUrl: string;
   } | null>(null);
+  const [fileAttachments, setFileAttachments] = useState<ChatAttachment[]>([]);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceLevel, setVoiceLevel] = useState(0);
+  const [voiceError, setVoiceError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -948,7 +1069,14 @@ export default function App() {
   const followTailRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
-  const preserveScreenshotRef = useRef(false);
+  const preserveComposerRef = useRef(false);
+  const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const voiceBaseRef = useRef("");
+  const voiceMeterFrameRef = useRef<number | null>(null);
+  const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
+  const voiceAudioContextRef = useRef<AudioContext | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceMeterUpdatedAtRef = useRef(0);
 
   const selected = state.sessions.find((session) => session.id === selectedId);
   const selectedProject = selected
@@ -1018,6 +1146,181 @@ export default function App() {
     } catch (error) {
       reportError(error);
     }
+  };
+
+  const selectAttachments = async (kind: "file" | "project") => {
+    setAttachmentMenuOpen(false);
+    try {
+      const next = await window.claudeUI.selectAttachments(kind);
+      if (!next.length) return;
+      setFileAttachments((current) => {
+        const seen = new Set(current.map((attachment) => `${attachment.kind}:${attachment.path}`));
+        return [...current, ...next.filter((attachment) => !seen.has(`${attachment.kind}:${attachment.path}`))].slice(0, 8);
+      });
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
+  const stopVoiceMeter = () => {
+    if (voiceMeterFrameRef.current !== null) {
+      window.cancelAnimationFrame(voiceMeterFrameRef.current);
+      voiceMeterFrameRef.current = null;
+    }
+    voiceAnalyserRef.current = null;
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
+    voiceStreamRef.current = null;
+    const audioContext = voiceAudioContextRef.current;
+    voiceAudioContextRef.current = null;
+    if (audioContext && audioContext.state !== "closed") void audioContext.close();
+    setVoiceLevel(0);
+  };
+
+  const startVoiceMeter = async () => {
+    stopVoiceMeter();
+    const getUserMedia = navigator.mediaDevices?.getUserMedia;
+    const AudioContextConstructor =
+      window.AudioContext ??
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!getUserMedia || !AudioContextConstructor) return;
+    try {
+      const stream = await getUserMedia.call(navigator.mediaDevices, { audio: true });
+      const audioContext = new AudioContextConstructor();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      const samples = new Uint8Array(analyser.fftSize);
+      voiceStreamRef.current = stream;
+      voiceAudioContextRef.current = audioContext;
+      voiceAnalyserRef.current = analyser;
+      const update = (timestamp: number) => {
+        if (voiceAnalyserRef.current !== analyser) return;
+        analyser.getByteTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) {
+          const centered = (sample - 128) / 128;
+          sum += centered * centered;
+        }
+        const rms = Math.sqrt(sum / samples.length);
+        if (timestamp - voiceMeterUpdatedAtRef.current >= 32) {
+          voiceMeterUpdatedAtRef.current = timestamp;
+          setVoiceLevel(Math.min(1, rms * 3.4));
+        }
+        voiceMeterFrameRef.current = window.requestAnimationFrame(update);
+      };
+      voiceMeterFrameRef.current = window.requestAnimationFrame(update);
+    } catch {
+      // SpeechRecognition may still work when microphone level analysis is denied.
+    }
+  };
+
+  const voiceBarStyle = (index: number): CSSProperties => {
+    const profile = [0.35, 0.62, 0.9, 0.55, 0.78, 1, 0.7, 0.48, 0.82, 0.58, 0.38];
+    const height = Math.round(4 + voiceLevel * (8 + profile[index] * 22));
+    return {
+      height: `${height}px`,
+      animationDelay: `${index * -65}ms`,
+    };
+  };
+
+  const toggleVoiceInput = () => {
+    if (voiceListening) {
+      speechRecognitionRef.current?.stop();
+      stopVoiceMeter();
+      return;
+    }
+    const browserWindow = window as Window & {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    };
+    const Recognition = browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      setVoiceError("当前系统没有可用的语音识别服务，请检查 Windows 语音识别和网络权限。");
+      return;
+    }
+    setVoiceError("");
+    voiceBaseRef.current = draft.trimEnd();
+    const recognition = new Recognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "zh-CN";
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        transcript += event.results[index]?.[0]?.transcript ?? "";
+      }
+      const base = voiceBaseRef.current;
+      setDraft(`${base}${base && transcript ? " " : ""}${transcript}`);
+    };
+    recognition.onerror = (event) => {
+      if (event.error !== "aborted") setVoiceError("语音识别没有启动，请检查麦克风权限后重试。");
+      setVoiceListening(false);
+      speechRecognitionRef.current = null;
+      stopVoiceMeter();
+    };
+    recognition.onend = () => {
+      setVoiceListening(false);
+      speechRecognitionRef.current = null;
+      stopVoiceMeter();
+    };
+    speechRecognitionRef.current = recognition;
+    setVoiceListening(true);
+    void startVoiceMeter();
+    try {
+      recognition.start();
+    } catch (error) {
+      speechRecognitionRef.current = null;
+      setVoiceListening(false);
+      stopVoiceMeter();
+      setVoiceError(error instanceof Error ? error.message : "语音识别启动失败，请重试。");
+    }
+  };
+
+  useEffect(() => {
+    if (!attachmentMenuOpen) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest(".composer-attach-menu, .toolbar-attach")) return;
+      setAttachmentMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [attachmentMenuOpen]);
+
+  useEffect(
+    () => () => {
+      speechRecognitionRef.current?.stop();
+      stopVoiceMeter();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    try {
+      const decision = window.localStorage.getItem("claude-ui-permission-notice-v1");
+      if (!decision) setPermissionNoticeOpen(true);
+    } catch {
+      setPermissionNoticeOpen(true);
+    }
+  }, []);
+
+  const dismissPermissionNotice = () => {
+    try {
+      window.localStorage.setItem("claude-ui-permission-notice-v1", "dismissed");
+    } catch {
+      // Continue without persisting the choice.
+    }
+    setPermissionNoticeOpen(false);
+  };
+
+  const grantPermissionNotice = () => {
+    try {
+      window.localStorage.setItem("claude-ui-permission-notice-v1", "granted");
+    } catch {
+      // Continue after the OS permission has been granted.
+    }
+    setPermissionNoticeOpen(false);
   };
 
   const refreshBalance = async (keepSpinnerForOneSecond = false) => {
@@ -1108,8 +1411,12 @@ export default function App() {
     followTailRef.current = true;
     previousScrollTopRef.current = 0;
     setActiveTimelineMessageId(undefined);
-    if (preserveScreenshotRef.current) preserveScreenshotRef.current = false;
-    else setScreenshotAttachment(null);
+    if (preserveComposerRef.current) preserveComposerRef.current = false;
+    else {
+      setScreenshotAttachment(null);
+      setFileAttachments([]);
+    }
+    setAttachmentMenuOpen(false);
   }, [selectedId]);
 
   useEffect(
@@ -1229,14 +1536,15 @@ export default function App() {
 
   const createSession = async (project?: Project) => {
     try {
+      const preserveComposer = Boolean(screenshotAttachment || fileAttachments.length || draft.trim());
       const session = await window.claudeUI.createSession(
         project
           ? { projectId: project.id, cwd: project.cwd }
           : { cwd: state.settings.defaultCwd || undefined },
       );
-      if (screenshotAttachment) preserveScreenshotRef.current = true;
+      if (preserveComposer) preserveComposerRef.current = true;
       setSelectedId(session.id);
-      setDraft("");
+      if (!preserveComposer) setDraft("");
       requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (error) {
       reportError(error);
@@ -1245,10 +1553,11 @@ export default function App() {
 
   const createProject = async (input: Pick<Project, "name" | "cwd">) => {
     try {
+      const preserveComposer = Boolean(screenshotAttachment || fileAttachments.length || draft.trim());
       const project = await window.claudeUI.createProject(input);
-      if (screenshotAttachment) preserveScreenshotRef.current = true;
+      if (preserveComposer) preserveComposerRef.current = true;
       setSelectedId("");
-      setDraft("");
+      if (!preserveComposer) setDraft("");
       setCollapsedProjects((current) => ({ ...current, [project.id]: false }));
     } catch (error) {
       reportError(error);
@@ -1316,17 +1625,26 @@ export default function App() {
   };
 
   const send = async () => {
-    if (!selected || (!draft.trim() && !screenshotAttachment)) return;
-    const prompt = draft.trim() || "请查看我附加的截图，并告诉我截图中最重要的问题或下一步操作。";
-    const attachment = screenshotAttachment;
+    if (!selected || (!draft.trim() && !screenshotAttachment && !fileAttachments.length)) return;
+    const prompt =
+      draft.trim() ||
+      (screenshotAttachment && fileAttachments.length
+        ? "请查看我附加的截图和文件，并告诉我最重要的问题或下一步操作。"
+        : screenshotAttachment
+          ? "请查看我附加的截图，并告诉我截图中最重要的问题或下一步操作。"
+          : "请查看我附加的文件，并告诉我其中最重要的问题或下一步操作。");
+    const screenshot = screenshotAttachment;
+    const attachments = fileAttachments;
     followTailRef.current = true;
     setDraft("");
     setScreenshotAttachment(null);
+    setFileAttachments([]);
     try {
-      await window.claudeUI.sendMessage(selected.id, prompt, attachment?.path);
+      await window.claudeUI.sendMessage(selected.id, prompt, screenshot?.path, attachments);
     } catch (error) {
       setDraft((current) => current || prompt);
-      setScreenshotAttachment((current) => current || attachment);
+      setScreenshotAttachment((current) => current || screenshot);
+      setFileAttachments((current) => (current.length ? current : attachments));
       reportError(error);
     }
   };
@@ -1439,6 +1757,8 @@ export default function App() {
         setScreenCaptureOpen(false);
       } else if (event.key === "Escape" && visionKeyDialogOpen) {
         setVisionKeyDialogOpen(false);
+      } else if (event.key === "Escape" && permissionNoticeOpen) {
+        dismissPermissionNotice();
       } else if (event.key === "Escape" && renamingSession) {
         setRenamingSession(null);
       } else if (event.key === "Escape" && renamingProjectId) {
@@ -1447,7 +1767,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
-  }, [projectDialogOpen, renamingProjectId, renamingSession, screenCaptureOpen, settingsOpen, selectedProject, visionKeyDialogOpen]);
+  }, [permissionNoticeOpen, projectDialogOpen, renamingProjectId, renamingSession, screenCaptureOpen, settingsOpen, selectedProject, visionKeyDialogOpen]);
 
   const renderSessionRow = (session: ChatSession) => (
     <div
@@ -1815,6 +2135,30 @@ export default function App() {
                 </button>
               </div>
             )}
+            {fileAttachments.length > 0 && (
+              <div className="composer-file-attachments">
+                {fileAttachments.map((attachment) => (
+                  <div className="composer-file-attachment" key={`${attachment.kind}:${attachment.path}`}>
+                    {attachment.kind === "project" ? <FolderOpen size={13} /> : <FileText size={13} />}
+                    <span title={attachment.path}>{attachment.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setFileAttachments((current) => current.filter((item) => item.path !== attachment.path))}
+                      aria-label={`移除附件：${attachment.name}`}
+                      title="移除附件"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {voiceError && (
+              <div className="composer-voice-error">
+                <Mic size={12} />
+                <span>{voiceError}</span>
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               value={draft}
@@ -1846,15 +2190,70 @@ export default function App() {
                   <FolderOpen size={17} />
                   <span>{selected ? currentProjectName : "项目"}</span>
                 </button>
+                <div className="composer-attach-wrap">
+                  <button
+                    type="button"
+                    className={`toolbar-attach ${attachmentMenuOpen ? "active" : ""}`}
+                    onClick={() => setAttachmentMenuOpen((current) => !current)}
+                    title="添加附件"
+                    aria-label="添加附件"
+                    aria-expanded={attachmentMenuOpen}
+                  >
+                    <Plus size={16} />
+                  </button>
+                  {attachmentMenuOpen && (
+                    <div
+                      className="composer-attach-menu"
+                      role="menu"
+                      aria-label="添加附件菜单"
+                      onPointerDown={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setAttachmentMenuOpen(false);
+                          void openScreenCapture();
+                        }}
+                      >
+                        <Camera size={15} />
+                        截图
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => void selectAttachments("file")}>
+                        <FileText size={15} />
+                        文件 / PDF
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => void selectAttachments("project")}>
+                        <FolderOpen size={15} />
+                        项目文件夹
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
-                  className="toolbar-screenshot"
-                  onClick={() => void openScreenCapture()}
-                  title={selected ? "截图并附加（Ctrl + Shift + 4）" : "先截图；新建会话后即可发送（Ctrl + Shift + 4）"}
-                  aria-label="截图并附加"
+                  className={`toolbar-voice ${voiceListening ? "listening" : ""}`}
+                  onClick={toggleVoiceInput}
+                  title={voiceListening ? "停止语音输入" : "语音转文字"}
+                  aria-label={voiceListening ? "停止语音输入" : "语音转文字"}
+                  aria-pressed={voiceListening}
                 >
-                  <Camera size={15} />
+                  {voiceListening ? <MicOff size={15} /> : <Mic size={15} />}
                 </button>
+                {voiceListening && (
+                  <div className="voice-live-meter" role="status" aria-live="polite" aria-label="正在聆听">
+                    <span className="voice-live-label">正在聆听</span>
+                    <span className="voice-wave" aria-hidden="true">
+                      {Array.from({ length: 11 }, (_, index) => (
+                        <i
+                          className="voice-wave-bar"
+                          key={index}
+                          style={voiceBarStyle(index)}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                )}
                 {selected && (
                   <ComposerTuningControls
                     session={selected}
@@ -1916,7 +2315,7 @@ export default function App() {
                     <button
                       className="send-button queue-button"
                       onClick={() => void send()}
-                      disabled={!draft.trim() && !screenshotAttachment}
+                      disabled={!draft.trim() && !screenshotAttachment && !fileAttachments.length}
                       title="加入后续队列 (Enter)"
                       aria-label="加入后续队列"
                     >
@@ -1937,7 +2336,7 @@ export default function App() {
                   <button
                     className="send-button"
                     onClick={() => void send()}
-                    disabled={!selected || (!draft.trim() && !screenshotAttachment)}
+                    disabled={!selected || (!draft.trim() && !screenshotAttachment && !fileAttachments.length)}
                     title="发送 (Enter)"
                     aria-label="发送消息"
                   >
@@ -2028,6 +2427,12 @@ export default function App() {
             setVisionKeyDialogOpen(false);
             setScreenCaptureOpen(true);
           }}
+        />
+      )}
+      {permissionNoticeOpen && (
+        <PermissionNoticeDialog
+          onClose={dismissPermissionNotice}
+          onGranted={grantPermissionNotice}
         />
       )}
 

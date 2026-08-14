@@ -9,6 +9,7 @@ import {
   nativeImage,
   nativeTheme,
   safeStorage,
+  session,
   shell,
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -49,6 +50,13 @@ interface ToolCall {
   status: ToolStatus;
 }
 
+interface ChatAttachment {
+  path: string;
+  name: string;
+  kind: "file" | "project";
+  size?: number;
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -64,6 +72,7 @@ interface ChatMessage {
   imagePath?: string;
   visionSummary?: string;
   visionModel?: string;
+  attachments?: ChatAttachment[];
 }
 
 interface ChatSession {
@@ -164,6 +173,8 @@ const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
 const DEFAULT_VISION_MODEL = "glm-4v-flash";
 const LATEST_RELEASE_URL = "https://api.github.com/repos/Kanye-QA/claude-code-ui/releases/latest";
 const MAX_QUEUED_MESSAGES = 20;
+const MAX_ATTACHMENTS = 8;
+const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
 
 const effortLevels: EffortLevel[] = ["", "low", "medium", "high", "xhigh", "max"];
 
@@ -652,6 +663,43 @@ function validateScreenshotPath(value: unknown): string | undefined {
   return candidate;
 }
 
+function validateAttachment(value: unknown): ChatAttachment {
+  if (!value || typeof value !== "object") throw new Error("附件信息无效，请重新选择文件。");
+  const input = value as Partial<ChatAttachment>;
+  if (typeof input.path !== "string" || !input.path.trim()) {
+    throw new Error("附件路径无效，请重新选择文件。");
+  }
+  const candidate = resolve(input.path);
+  const kind = input.kind === "project" ? "project" : input.kind === "file" ? "file" : undefined;
+  if (!kind) throw new Error("附件类型无效，请重新选择文件。");
+  const stats = statSync(candidate);
+  if (kind === "project") {
+    if (!stats.isDirectory()) throw new Error("所选项目文件夹不存在，请重新选择。");
+    return {
+      path: candidate,
+      name: basename(candidate) || candidate,
+      kind,
+    };
+  }
+  if (!stats.isFile()) throw new Error("所选附件不是文件，请重新选择。");
+  if (stats.size > MAX_ATTACHMENT_SIZE) {
+    throw new Error("单个附件不能超过 50 MB，请选择较小的文件。");
+  }
+  return {
+    path: candidate,
+    name: basename(candidate) || candidate,
+    kind,
+    size: stats.size,
+  };
+}
+
+function validateAttachmentList(value: unknown): ChatAttachment[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("附件列表无效，请重新选择文件。");
+  if (value.length > MAX_ATTACHMENTS) throw new Error(`一次最多附加 ${MAX_ATTACHMENTS} 个文件。`);
+  return value.map(validateAttachment);
+}
+
 function resolveProviderApiKey(environmentNames: string[]): string | undefined {
   const environmentKey = environmentNames
     .map((name) => process.env[name])
@@ -946,12 +994,20 @@ function promptWithScreenshot(
   imagePath?: string,
   visionSummary?: string,
   visionModel?: string,
+  attachments: ChatAttachment[] = [],
 ): string {
+  const attachmentPrompt = attachments.length
+    ? `\n\n[本地附件]\n${attachments
+        .map((attachment) => `${attachment.kind === "project" ? "项目文件夹" : "文件"}：${attachment.name}\n路径：${attachment.path}`)
+        .join("\n")}\n请按需读取这些本地附件来完成原任务；如果当前工具无法解析某种文件（例如 PDF），请明确说明原因和可行的替代办法。`
+    : "";
   if (visionSummary) {
-    return `${prompt}\n\n[截图识别结果，来自 ${visionModel || "视觉模型"}]\n${visionSummary}\n\n请基于上面的截图识别结果继续完成原任务；如果识别结果不足，请先说明需要补充什么。`;
+    return `${prompt}${attachmentPrompt}\n\n[截图识别结果，来自 ${visionModel || "视觉模型"}]\n${visionSummary}\n\n请基于上面的截图识别结果继续完成原任务；如果识别结果不足，请先说明需要补充什么。`;
   }
-  if (!imagePath) return prompt;
-  return `${prompt}\n\n[已附加截图：${imagePath}]\n请先使用 Read 工具读取这张 PNG 截图，再结合截图完成任务；如果当前模型不支持图片，请明确说明。`;
+  if (!imagePath) {
+    return `${prompt}${attachmentPrompt}`;
+  }
+  return `${prompt}${attachmentPrompt}\n\n[已附加截图：${imagePath}]\n请先使用 Read 工具读取这张 PNG 截图，再结合截图完成任务；如果当前模型不支持图片，请明确说明。`;
 }
 
 function assistantMessage(session: ChatSession, id: string): ChatMessage {
@@ -1605,8 +1661,10 @@ function startNextQueuedMessage(session: ChatSession): boolean {
 
   const queued = session.messages[queuedIndex];
   let imagePath: string | undefined;
+  let attachments: ChatAttachment[] = [];
   try {
     imagePath = queued.visionSummary ? undefined : validateScreenshotPath(queued.imagePath);
+    attachments = validateAttachmentList(queued.attachments);
   } catch (error) {
     queued.status = "stopped";
     queued.error = error instanceof Error ? error.message : String(error);
@@ -1627,6 +1685,7 @@ function startNextQueuedMessage(session: ChatSession): boolean {
     imagePath ? store.settings.visionModel.trim() || undefined : undefined,
     queued.visionSummary,
     queued.visionModel,
+    attachments,
   );
   return true;
 }
@@ -1690,6 +1749,7 @@ function startClaude(
   modelOverride?: string,
   visionSummary?: string,
   visionModel?: string,
+  attachments: ChatAttachment[] = [],
 ): void {
   const executable = resolveClaudeExecutable();
   const args = [
@@ -1775,7 +1835,7 @@ function startClaude(
     finishJob(session.id, code);
   });
 
-  child.stdin.end(promptWithScreenshot(prompt, imagePath, visionSummary, visionModel), "utf8");
+  child.stdin.end(promptWithScreenshot(prompt, imagePath, visionSummary, visionModel, attachments), "utf8");
   scheduleSync(session.id, true);
 }
 
@@ -1814,6 +1874,23 @@ function registerIpc(): void {
         height: size.height,
       };
     });
+  });
+
+  ipcMain.handle("dialog:attachments", async (_event, rawKind: unknown) => {
+    const kind = rawKind === "project" ? "project" : "file";
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: kind === "project" ? "选择要附加的项目文件夹" : "选择要附加的文件（支持 PDF）",
+      properties: kind === "project" ? ["openDirectory"] : ["openFile", "multiSelections"],
+      filters:
+        kind === "file"
+          ? [
+              { name: "常用文件", extensions: ["pdf", "txt", "md", "json", "csv", "doc", "docx", "png", "jpg", "jpeg"] },
+              { name: "所有文件", extensions: ["*"] },
+            ]
+          : undefined,
+    });
+    if (result.canceled) return [];
+    return result.filePaths.slice(0, MAX_ATTACHMENTS).map((path) => validateAttachment({ path, kind }));
   });
 
   ipcMain.handle("screen:save", (_event, rawDataUrl: unknown) => {
@@ -1939,10 +2016,17 @@ function registerIpc(): void {
 
   ipcMain.handle(
     "chat:send",
-    async (_event, id: string, rawPrompt: string, rawScreenshotPath?: unknown) => {
+    async (
+      _event,
+      id: string,
+      rawPrompt: string,
+      rawScreenshotPath?: unknown,
+      rawAttachments?: unknown,
+    ) => {
     const prompt = rawPrompt.trim();
     if (!prompt) throw new Error("请输入消息。");
     const imagePath = validateScreenshotPath(rawScreenshotPath);
+    const attachments = validateAttachmentList(rawAttachments);
     const session = sessionById(id);
     if (!isDirectory(session.cwd)) throw new Error("当前项目文件夹不存在，请重新选择。");
 
@@ -1975,6 +2059,7 @@ function registerIpc(): void {
       imagePath,
       visionSummary,
       visionModel: visionSummary ? visionModel : undefined,
+      attachments: attachments.length ? attachments : undefined,
     };
     if (session.messages.length === 0 && !session.titleEdited) {
       session.title = topic;
@@ -2010,6 +2095,7 @@ function registerIpc(): void {
       visionSummary ? undefined : visionModel || undefined,
       visionSummary,
       visionSummary ? visionModel : undefined,
+      attachments,
     );
     return {
       userMessageId: userMessage.id,
@@ -2184,6 +2270,15 @@ if (previewMode) {
 }
 
 app.whenReady().then(() => {
+  // The renderer shows the themed consent dialog before requesting the microphone.
+  // Electron has no separate "public network" permission: this app only makes
+  // outbound HTTPS requests and does not open an inbound firewall port.
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === "media");
+  });
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    return permission === "media";
+  });
   store = loadStore();
   saveStoreNow();
   nativeTheme.themeSource = store.settings.theme;

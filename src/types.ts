@@ -34,6 +34,14 @@ export interface ChatMessage {
   imagePath?: string;
   visionSummary?: string;
   visionModel?: string;
+  attachments?: ChatAttachment[];
+}
+
+export interface ChatAttachment {
+  path: string;
+  name: string;
+  kind: "file" | "project";
+  size?: number;
 }
 
 export interface ChatSession {
@@ -146,6 +154,7 @@ export interface ClaudeUIApi {
     id: string,
     prompt: string,
     screenshotPath?: string,
+    attachments?: ChatAttachment[],
   ): Promise<{ userMessageId: string; assistantMessageId?: string; queued: boolean }>;
   stopMessage(id: string): Promise<boolean>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
@@ -157,6 +166,7 @@ export interface ClaudeUIApi {
   getVisionKeyStatus(): Promise<VisionKeyStatus>;
   setVisionApiKey(value: string): Promise<VisionKeyStatus>;
   checkForUpdates(): Promise<UpdateCheckResult>;
+  selectAttachments(kind: "file" | "project"): Promise<ChatAttachment[]>;
   readClipboard(): Promise<string>;
   writeClipboard(text: string): Promise<boolean>;
   getScreenSources(): Promise<ScreenSource[]>;
