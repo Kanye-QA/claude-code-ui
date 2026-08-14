@@ -6,7 +6,7 @@
 
 [![最新正式版](https://img.shields.io/github/v/release/Kanye-QA/claude-code-ui?label=%E6%9C%80%E6%96%B0%E6%AD%A3%E5%BC%8F%E7%89%88)](https://github.com/Kanye-QA/claude-code-ui/releases/latest)
 
-**当前版本：5.3**  ·  [下载 Windows 便携版（Claude-Code-UI-5.3-portable.exe）](https://github.com/Kanye-QA/claude-code-ui/releases/download/v5.3/Claude-Code-UI-5.3-portable.exe)
+**当前版本：5.4**  ·  [下载 Windows 便携版（Claude-Code-UI-5.4-portable.exe）](https://github.com/Kanye-QA/claude-code-ui/releases/download/v5.4/Claude-Code-UI-5.4-portable.exe)
 
 下载后双击即可运行，不需要安装 Node.js。旧版本和完整说明都保留在 [Releases](https://github.com/Kanye-QA/claude-code-ui/releases)。
 
@@ -17,6 +17,11 @@
 > 模型菜单中的品牌图标仅用于识别供应商，不代表任何厂商的合作或背书；图标来源与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 更新摘要
+
+### 5.4 正式版
+
+- 修复从桌面任务栏启动时出现两个任务栏窗口的问题：窗口使用固定 AppUserModelID，任务栏快捷方式指向稳定的解包程序，不再直接指向便携版启动器。
+- 任务栏图标、窗口图标和重新打开行为统一到同一个 Claude Code UI 应用分组。
 
 ### 5.3 正式版
 
@@ -93,13 +98,13 @@
 
 ## 使用便携版
 
-从 GitHub Releases 下载 5.3 正式版 `Claude-Code-UI-5.3-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
+从 GitHub Releases 下载 5.4 正式版 `Claude-Code-UI-5.4-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
 
 首次运行若出现 Windows SmartScreen 提示，请先核对下载来源和 Release 页 SHA-256。当前社区构建没有商业代码签名；提示不等于已检测到病毒，也不要求必须上架 Microsoft Store，但不建议关闭 Defender 或 Smart App Control。
 
 ## 基本使用
 
-1. 打开 Claude Code UI 5.3。
+1. 打开 Claude Code UI 5.4。
 2. 点击左侧“新建项目”并选择项目目录；名称可留空，由应用根据本地项目信息自动识别。创建后点击项目右侧“+”或“新建第一段会话”开始对话。
 3. 未选择项目时可在“未归类对话”区域新建独立会话；项目和会话标题旁的铅笔都可直接重命名。
 4. 输入任务并按 Enter 发送；Shift + Enter 换行。

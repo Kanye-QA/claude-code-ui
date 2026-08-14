@@ -171,6 +171,7 @@ let saveTimer: NodeJS.Timeout | null = null;
 const previewMode = process.env.CLAUDE_UI_MOCK === "1";
 const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
 const DEFAULT_VISION_MODEL = "glm-4v-flash";
+const APP_USER_MODEL_ID = "local.claudecode.ui";
 const LATEST_RELEASE_URL = "https://api.github.com/repos/Kanye-QA/claude-code-ui/releases/latest";
 const MAX_QUEUED_MESSAGES = 20;
 const MAX_ATTACHMENTS = 8;
@@ -2245,6 +2246,10 @@ function createWindow(): void {
     },
   });
 
+  if (process.platform === "win32") {
+    mainWindow.setAppDetails({ appId: APP_USER_MODEL_ID });
+  }
+
   mainWindow.setMenuBarVisibility(false);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -2270,6 +2275,7 @@ if (previewMode) {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
   // The renderer shows the themed consent dialog before requesting the microphone.
   // Electron has no separate "public network" permission: this app only makes
   // outbound HTTPS requests and does not open an inbound firewall port.
