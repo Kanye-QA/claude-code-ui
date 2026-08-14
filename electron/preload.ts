@@ -10,8 +10,8 @@ const api = {
   updateSession: (id: string, patch: unknown) =>
     ipcRenderer.invoke("session:update", id, patch),
   deleteSession: (id: string) => ipcRenderer.invoke("session:delete", id),
-  sendMessage: (id: string, prompt: string) =>
-    ipcRenderer.invoke("chat:send", id, prompt),
+  sendMessage: (id: string, prompt: string, screenshotPath?: string) =>
+    ipcRenderer.invoke("chat:send", id, prompt, screenshotPath),
   stopMessage: (id: string) => ipcRenderer.invoke("chat:stop", id),
   updateSettings: (patch: unknown) => ipcRenderer.invoke("settings:update", patch),
   selectDirectory: (initialPath?: string) =>
@@ -20,8 +20,17 @@ const api = {
   openExternal: (url: string) => ipcRenderer.invoke("external:open", url),
   claudeStatus: () => ipcRenderer.invoke("claude:status"),
   queryBalance: () => ipcRenderer.invoke("balance:query"),
+  getVisionKeyStatus: () => ipcRenderer.invoke("vision:key-status"),
+  setVisionApiKey: (value: string) => ipcRenderer.invoke("vision:key:set", value),
   readClipboard: () => ipcRenderer.invoke("clipboard:readText"),
   writeClipboard: (text: string) => ipcRenderer.invoke("clipboard:writeText", text),
+  getScreenSources: () => ipcRenderer.invoke("screen:sources"),
+  saveScreenshot: (dataUrl: string) => ipcRenderer.invoke("screen:save", dataUrl),
+  onScreenShortcut: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("screen:shortcut", listener);
+    return () => ipcRenderer.removeListener("screen:shortcut", listener);
+  },
   onStateChanged: (callback: (state: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
     ipcRenderer.on("state:changed", listener);

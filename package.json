@@ -1,8 +1,8 @@
 {
   "name": "claude-code-ui",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "private": true,
-  "description": "A local desktop chat interface for Claude Code that reuses the current CC Switch configuration.",
+  "description": "A local desktop chat interface for Claude Code with built-in model selection and domestic screenshot vision.",
   "author": "Kanye-QA",
   "license": "MIT",
   "repository": {
@@ -46,7 +46,7 @@
     "appId": "local.claudecode.ui",
     "productName": "Claude Code UI",
     "electronDist": "node_modules/electron/dist",
-    "artifactName": "Claude-Code-UI-5.0-portable.${ext}",
+    "artifactName": "Claude-Code-UI-5.1-portable.${ext}",
     "asar": true,
     "files": [
       "dist/**/*",

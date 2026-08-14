@@ -1,6 +1,8 @@
 import {
   Check,
+  Camera,
   ChevronDown,
+  ChevronRight,
   CircleAlert,
   ClipboardPaste,
   Clock3,
@@ -9,6 +11,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  KeyRound,
   MessageSquareText,
   Monitor,
   Moon,
@@ -62,6 +65,7 @@ import type {
   ModelCatalogEntry,
   PermissionMode,
   Project,
+  ScreenSource,
 } from "./types";
 
 const emptyState: AppState = {
@@ -71,17 +75,13 @@ const emptyState: AppState = {
     defaultCwd: "",
     defaultPermissionMode: "auto",
     defaultEffort: "",
-    requestedModel: "",
+  requestedModel: "",
+    visionModel: "glm-4v-flash",
     claudePath: "",
     theme: "system",
   },
   activeSessionIds: [],
 };
-
-function tail(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts.at(-1) || path || "选择项目";
-}
 
 function sameDirectory(left?: string, right?: string): boolean {
   const normalize = (value = "") => value.replace(/[\\/]+$/, "").toLowerCase();
@@ -102,7 +102,7 @@ function displayModel(
   session?: ChatSession,
   modelCatalog: ModelCatalogEntry[] = [],
 ): string {
-  const value = session?.requestedModel || session?.activeModel;
+  const value = session?.activeModel || session?.requestedModel;
   return modelCatalog.find((model) => model.id === value)?.name ?? modelLabel(value);
 }
 
@@ -159,6 +159,14 @@ function MessageView({ message }: { message: ChatMessage }) {
       >
         <div className="user-message-stack">
           <div className="user-bubble">{message.content}</div>
+          {message.imagePath && (
+            <div className="message-attachment-note">
+              <Camera size={12} />
+              {message.visionModel
+                ? `已由 ${modelLabel(message.visionModel)} 识别截图`
+                : "已附加截图"}
+            </div>
+          )}
           {message.status === "queued" && (
             <div className="queued-note">
               <Clock3 size={11} /> 等待当前任务完成后自动发送
@@ -266,6 +274,7 @@ function SettingsPanel({
   onUpdate,
 }: SettingsPanelProps) {
   const [model, setModel] = useState(state.settings.requestedModel);
+  const [visionModel, setVisionModel] = useState(state.settings.visionModel);
   const [claudePath, setClaudePath] = useState(state.settings.claudePath);
 
   const chooseDefaultFolder = async () => {
@@ -389,7 +398,7 @@ function SettingsPanel({
                 list="claude-model-options"
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
-                placeholder="留空：跟随 CC Switch 当前模型"
+                placeholder="留空：跟随 Claude Code 配置中的模型"
               />
               <button onClick={() => void onUpdate({ requestedModel: model })}>保存</button>
             </div>
@@ -399,13 +408,33 @@ function SettingsPanel({
                   {option.label}
                 </option>
               ))}
+              <option value="glm-4v-flash">GLM-4V-Flash（国内免费视觉，推荐）</option>
+              <option value="gemini-3.6-flash">Gemini 3.6 Flash（视觉）</option>
+              <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite（视觉）</option>
               {modelCatalog.map((option) => (
                 <option key={option.id} value={option.id}>
                   {option.name}
                 </option>
               ))}
             </datalist>
-            <p>建议留空，这样切换 CC Switch 后无需修改这里。</p>
+            <p>留空时使用 Claude Code 自己的默认模型；也可以输入具体模型 ID。</p>
+          </div>
+
+          <div className="setting-group">
+            <label htmlFor="vision-model">截图识别模型（可选）</label>
+            <div className="input-save-row">
+              <input
+                id="vision-model"
+                list="claude-model-options"
+                value={visionModel}
+                onChange={(event) => setVisionModel(event.target.value)}
+                placeholder="留空：使用当前模型读取截图"
+              />
+              <button onClick={() => void onUpdate({ visionModel })}>保存</button>
+            </div>
+            <p>
+              推荐选择 GLM-4V-Flash：国内智谱模型先读截图，再把结果交给当前模型继续任务。模型本身免费，但仍需你的智谱 API Key，并受账号速率限制。
+            </p>
           </div>
 
           <div className="setting-group">
@@ -607,6 +636,211 @@ function NewProjectDialog({
   );
 }
 
+function VisionKeyDialog({
+  onClose,
+  onSaved,
+}: {
+  onClose(): void;
+  onSaved(): void;
+}) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!value.trim()) {
+      setError("请输入智谱 API Key。");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await window.claudeUI.setVisionApiKey(value);
+      onSaved();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose}>
+      <form
+        className="theme-dialog vision-key-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="vision-key-title"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => void save(event)}
+      >
+        <header className="dialog-header">
+          <div className="dialog-icon">
+            <KeyRound size={18} />
+          </div>
+          <div>
+            <p className="eyebrow">截图识别</p>
+            <h2 id="vision-key-title">输入您的智谱 API Key</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="vision-key-content">
+          <p>
+            截图会先交给国内的 GLM-4V-Flash 识别，再把识别结果交给当前会话模型继续任务。
+            该模型官方标注免费，但仍受智谱账号的速率和使用规则限制。
+          </p>
+          <label htmlFor="vision-api-key">智谱 API Key</label>
+          <input
+            id="vision-api-key"
+            type="password"
+            autoFocus
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder="粘贴您的智谱 API Key"
+            autoComplete="off"
+          />
+          <small>密钥仅在本机使用 Windows 凭据加密保存，不会发送到本项目服务器。</small>
+          <button
+            className="vision-key-help"
+            type="button"
+            onClick={() => void window.claudeUI.openExternal("https://open.bigmodel.cn/")}
+          >
+            去智谱开放平台获取 API Key
+          </button>
+          {error && <p className="dialog-error">{error}</p>}
+        </div>
+        <footer className="dialog-actions">
+          <button className="dialog-secondary" type="button" onClick={onClose} disabled={saving}>
+            取消
+          </button>
+          <button className="dialog-primary" type="submit" disabled={saving}>
+            <KeyRound size={14} />
+            {saving ? "正在保存" : "保存并继续截图"}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function ScreenCaptureDialog({
+  onClose,
+  onCaptured,
+}: {
+  onClose(): void;
+  onCaptured(value: { path: string; dataUrl: string }): void;
+}) {
+  const [sources, setSources] = useState<ScreenSource[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadSources = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const next = await window.claudeUI.getScreenSources();
+      setSources(next);
+      setSelectedId((current) => (next.some((source) => source.id === current) ? current : next[0]?.id ?? ""));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSources();
+  }, []);
+
+  const selected = sources.find((source) => source.id === selectedId);
+  const capture = async () => {
+    if (!selected) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await window.claudeUI.saveScreenshot(selected.thumbnail);
+      onCaptured(result);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose}>
+      <section
+        className="theme-dialog screen-capture-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="screen-capture-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="dialog-header">
+          <div className="dialog-icon">
+            <Camera size={18} />
+          </div>
+          <div>
+            <p className="eyebrow">截图输入</p>
+            <h2 id="screen-capture-title">截取并发送</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="screen-capture-content">
+          <div className="screen-capture-toolbar">
+            <span>选择屏幕或窗口，截取后会直接附加到输入框。</span>
+            <button type="button" className="icon-button" onClick={() => void loadSources()} disabled={loading} aria-label="刷新画面列表">
+              <RefreshCw size={14} className={loading ? "spin" : ""} />
+            </button>
+          </div>
+          {selected ? (
+            <div className="screen-preview">
+              <img src={selected.thumbnail} alt={`${selected.name} 预览`} />
+            </div>
+          ) : (
+            <div className="screen-preview screen-preview-empty">
+              {loading ? "正在读取屏幕…" : "没有可用的屏幕或窗口"}
+            </div>
+          )}
+          <div className="screen-source-list" role="listbox" aria-label="屏幕和窗口">
+            {sources.map((source) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={source.id === selectedId}
+                className={`screen-source-card ${source.id === selectedId ? "selected" : ""}`}
+                key={source.id}
+                onClick={() => setSelectedId(source.id)}
+              >
+                <img src={source.thumbnail} alt="" />
+                <span>{source.name}</span>
+              </button>
+            ))}
+          </div>
+          {error && <p className="dialog-error">{error}</p>}
+        </div>
+        <footer className="dialog-actions">
+          <button className="dialog-secondary" type="button" onClick={onClose} disabled={saving}>
+            取消
+          </button>
+          <button className="dialog-primary" type="button" onClick={() => void capture()} disabled={!selected || saving}>
+            <Camera size={14} />
+            {saving ? "正在附加" : "附加截图"}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>(emptyState);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -615,11 +849,18 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [screenCaptureOpen, setScreenCaptureOpen] = useState(false);
+  const [visionKeyDialogOpen, setVisionKeyDialogOpen] = useState(false);
+  const [screenshotAttachment, setScreenshotAttachment] = useState<{
+    path: string;
+    dataUrl: string;
+  } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
   const [projectRenameDraft, setProjectRenameDraft] = useState("");
+  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({});
   const [composerContextMenu, setComposerContextMenu] = useState<{
     x: number;
     y: number;
@@ -646,7 +887,7 @@ export default function App() {
   const currentProjectName = selected
     ? selectedProject && sameDirectory(selectedProject.cwd, selected.cwd)
       ? selectedProject.name
-      : tail(selected.cwd)
+      : "未归类对话"
     : "";
   const active = selected ? state.activeSessionIds.includes(selected.id) : false;
   const queuedCount = selected
@@ -670,6 +911,14 @@ export default function App() {
       })
       .filter((group) => group.visible);
   }, [search, state.projects, state.sessions]);
+  const unassignedSessions = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return state.sessions.filter(
+      (session) =>
+        !session.projectId &&
+        (!query || session.title.toLowerCase().includes(query) || session.cwd.toLowerCase().includes(query)),
+    );
+  }, [search, state.sessions]);
   const contextInput = selected
     ? selected.contextUsage.inputTokens +
       selected.contextUsage.cacheCreationInputTokens +
@@ -686,6 +935,19 @@ export default function App() {
     const message = error instanceof Error ? error.message : String(error);
     setToast(message.replace(/^Error invoking remote method '[^']+': /, ""));
     window.setTimeout(() => setToast(""), 4_500);
+  };
+
+  const openScreenCapture = async () => {
+    try {
+      const status = await window.claudeUI.getVisionKeyStatus();
+      if (!status.configured) {
+        setVisionKeyDialogOpen(true);
+        return;
+      }
+      setScreenCaptureOpen(true);
+    } catch (error) {
+      reportError(error);
+    }
   };
 
   const refreshBalance = async (keepSpinnerForOneSecond = false) => {
@@ -776,7 +1038,13 @@ export default function App() {
     followTailRef.current = true;
     previousScrollTopRef.current = 0;
     setActiveTimelineMessageId(undefined);
+    setScreenshotAttachment(null);
   }, [selectedId]);
+
+  useEffect(
+    () => window.claudeUI.onScreenShortcut(() => void openScreenCapture()),
+    [],
+  );
 
   useEffect(() => {
     if (!followTailRef.current) return;
@@ -888,16 +1156,13 @@ export default function App() {
     };
   }, [composerContextMenu]);
 
-  const createSession = async (project = selectedProject) => {
-    if (!project) {
-      setProjectDialogOpen(true);
-      return;
-    }
+  const createSession = async (project?: Project) => {
     try {
-      const session = await window.claudeUI.createSession({
-        projectId: project.id,
-        cwd: project.cwd,
-      });
+      const session = await window.claudeUI.createSession(
+        project
+          ? { projectId: project.id, cwd: project.cwd }
+          : { cwd: state.settings.defaultCwd || undefined },
+      );
       setSelectedId(session.id);
       setDraft("");
       requestAnimationFrame(() => textareaRef.current?.focus());
@@ -909,13 +1174,9 @@ export default function App() {
   const createProject = async (input: Pick<Project, "name" | "cwd">) => {
     try {
       const project = await window.claudeUI.createProject(input);
-      const session = await window.claudeUI.createSession({
-        projectId: project.id,
-        cwd: project.cwd,
-      });
-      setSelectedId(session.id);
+      setSelectedId("");
       setDraft("");
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      setCollapsedProjects((current) => ({ ...current, [project.id]: false }));
     } catch (error) {
       reportError(error);
       throw error;
@@ -982,14 +1243,17 @@ export default function App() {
   };
 
   const send = async () => {
-    if (!selected || !draft.trim()) return;
-    const prompt = draft;
+    if (!selected || (!draft.trim() && !screenshotAttachment)) return;
+    const prompt = draft.trim() || "请查看我附加的截图，并告诉我截图中最重要的问题或下一步操作。";
+    const attachment = screenshotAttachment;
     followTailRef.current = true;
     setDraft("");
+    setScreenshotAttachment(null);
     try {
-      await window.claudeUI.sendMessage(selected.id, prompt);
+      await window.claudeUI.sendMessage(selected.id, prompt, attachment?.path);
     } catch (error) {
       setDraft((current) => current || prompt);
+      setScreenshotAttachment((current) => current || attachment);
       reportError(error);
     }
   };
@@ -1085,6 +1349,9 @@ export default function App() {
       if (commandKey && event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
         setProjectDialogOpen(true);
+      } else if (commandKey && event.shiftKey && event.key === "4") {
+        event.preventDefault();
+        void openScreenCapture();
       } else if (commandKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
         void createSession();
@@ -1095,6 +1362,10 @@ export default function App() {
         setSettingsOpen(false);
       } else if (event.key === "Escape" && projectDialogOpen) {
         setProjectDialogOpen(false);
+      } else if (event.key === "Escape" && screenCaptureOpen) {
+        setScreenCaptureOpen(false);
+      } else if (event.key === "Escape" && visionKeyDialogOpen) {
+        setVisionKeyDialogOpen(false);
       } else if (event.key === "Escape" && renamingSession) {
         setRenamingSession(null);
       } else if (event.key === "Escape" && renamingProjectId) {
@@ -1103,7 +1374,46 @@ export default function App() {
     };
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
-  }, [projectDialogOpen, renamingProjectId, renamingSession, settingsOpen, selectedProject]);
+  }, [projectDialogOpen, renamingProjectId, renamingSession, screenCaptureOpen, settingsOpen, selectedProject, visionKeyDialogOpen]);
+
+  const renderSessionRow = (session: ChatSession) => (
+    <div
+      key={session.id}
+      className={`session-row ${selectedId === session.id ? "active" : ""}`}
+    >
+      <button
+        className="session-select"
+        onClick={() => setSelectedId(session.id)}
+        aria-current={selectedId === session.id ? "page" : undefined}
+      >
+        <MessageSquareText size={15} />
+        <span className="session-copy">
+          <strong>{session.title}</strong>
+          <small>{relativeTime(session.updatedAt)}</small>
+        </span>
+      </button>
+      {state.activeSessionIds.includes(session.id) ? (
+        <span className="live-dot" />
+      ) : (
+        <span className="session-actions">
+          <button
+            className="session-action"
+            aria-label={`重命名会话：${session.title}`}
+            onClick={() => beginRename(session)}
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            className="session-action delete-session"
+            aria-label={`删除会话：${session.title}`}
+            onClick={() => setDeleteTarget(session)}
+          >
+            <Trash2 size={14} />
+          </button>
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <div className={`app-shell ${sidebarOpen ? "sidebar-visible" : "sidebar-hidden"}`}>
@@ -1140,8 +1450,35 @@ export default function App() {
           />
         </div>
 
-        <div className="session-label">项目与会话</div>
+        <div className="session-label sidebar-section-heading">
+          <span>未归类对话</span>
+          <button
+            type="button"
+            className="section-add-button"
+            onClick={() => void createSession()}
+            title="新建未归类对话"
+            aria-label="新建未归类对话"
+          >
+            <Plus size={13} />
+          </button>
+        </div>
         <nav className="session-list">
+          {unassignedSessions.map(renderSessionRow)}
+          {!unassignedSessions.length && (
+            <div className="sidebar-empty sidebar-empty-compact">没有未归类对话</div>
+          )}
+          <div className="session-label sidebar-section-heading projects-label">
+            <span>项目</span>
+            <button
+              type="button"
+              className="section-add-button"
+              onClick={() => setProjectDialogOpen(true)}
+              title="新建项目"
+              aria-label="新建项目"
+            >
+              <FolderPlus size={13} />
+            </button>
+          </div>
           {projectGroups.map(({ project, sessions }) => (
             <section className="project-group" key={project.id}>
               <header className="project-heading">
@@ -1168,10 +1505,25 @@ export default function App() {
                     </button>
                   </form>
                 ) : (
-                  <span className="project-name" title={project.cwd}>
+                  <button
+                    type="button"
+                    className="project-name project-collapse-toggle"
+                    onClick={() =>
+                      setCollapsedProjects((current) => ({
+                        ...current,
+                        [project.id]: !(current[project.id] ?? false),
+                      }))
+                    }
+                    aria-expanded={!(collapsedProjects[project.id] ?? false)}
+                    title={project.cwd}
+                  >
+                    <ChevronRight
+                      size={13}
+                      className={collapsedProjects[project.id] ? "collapsed" : ""}
+                    />
                     <Folder size={14} />
                     <strong>{project.name}</strong>
-                  </span>
+                  </button>
                 )}
                 {renamingProjectId !== project.id && (
                   <span className="project-heading-actions">
@@ -1194,55 +1546,17 @@ export default function App() {
                   </span>
                 )}
               </header>
-              {sessions.length ? (
-                sessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className={`session-row ${selectedId === session.id ? "active" : ""}`}
-                  >
-                    <button
-                      className="session-select"
-                      onClick={() => setSelectedId(session.id)}
-                      aria-current={selectedId === session.id ? "page" : undefined}
-                    >
-                      <MessageSquareText size={15} />
-                      <span className="session-copy">
-                        <strong>{session.title}</strong>
-                        <small>{relativeTime(session.updatedAt)}</small>
-                      </span>
-                    </button>
-                    {state.activeSessionIds.includes(session.id) ? (
-                      <span className="live-dot" />
-                    ) : (
-                      <span className="session-actions">
-                        <button
-                          className="session-action"
-                          aria-label={`重命名会话：${session.title}`}
-                          onClick={() => beginRename(session)}
-                        >
-                          <Pencil size={13} />
-                        </button>
-                        <button
-                          className="session-action delete-session"
-                          aria-label={`删除会话：${session.title}`}
-                          onClick={() => setDeleteTarget(session)}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </span>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <button className="project-empty" onClick={() => void createSession(project)}>
-                  <Plus size={13} /> 新建第一段会话
-                </button>
-              )}
+              {!collapsedProjects[project.id] &&
+                (sessions.length ? (
+                  sessions.map(renderSessionRow)
+                ) : (
+                  <button className="project-empty" onClick={() => void createSession(project)}>
+                    <Plus size={13} /> 新建第一段会话
+                  </button>
+                ))}
             </section>
           ))}
-          {!projectGroups.length && (
-            <div className="sidebar-empty">没有匹配的项目或会话</div>
-          )}
+          {!projectGroups.length && <div className="sidebar-empty">没有匹配的项目</div>}
         </nav>
 
         <div className="sidebar-footer">
@@ -1321,9 +1635,13 @@ export default function App() {
           <div className="topbar-actions">
             {selected && (
               <>
-                <div className="model-pill">
-                  <ModelBrandIcon model={selected.requestedModel || selected.activeModel} size={14} />
+                <div
+                  className={`model-pill ${selected.activeModel ? "model-pill-confirmed" : ""}`}
+                  title={`请求模型：${selected.requestedModel || "跟随 Claude Code 配置"}\n实际模型：${selected.activeModel || "尚未收到运行回显"}`}
+                >
+                  <ModelBrandIcon model={selected.activeModel || selected.requestedModel} size={14} />
                   {displayModel(selected, modelCatalog)}
+                  {selected.activeModel && <span className="model-confirmed-mark">实</span>}
                 </div>
               </>
             )}
@@ -1410,6 +1728,20 @@ export default function App() {
 
         <div className="composer-zone">
           <div className={`composer ${active ? "composer-active" : ""}`}>
+            {screenshotAttachment && (
+              <div className="composer-attachment">
+                <img src={screenshotAttachment.dataUrl} alt="截图预览" />
+                <span>截图已附加，可直接发送</span>
+                <button
+                  type="button"
+                  onClick={() => setScreenshotAttachment(null)}
+                  aria-label="移除截图"
+                  title="移除截图"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            )}
             <textarea
               ref={textareaRef}
               value={draft}
@@ -1440,6 +1772,16 @@ export default function App() {
                 >
                   <FolderOpen size={17} />
                   <span>{selected ? currentProjectName : "项目"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="toolbar-screenshot"
+                  onClick={() => void openScreenCapture()}
+                  disabled={!selected}
+                  title="截图并附加（Ctrl + Shift + 4）"
+                  aria-label="截图并附加"
+                >
+                  <Camera size={15} />
                 </button>
                 {selected && (
                   <ComposerTuningControls
@@ -1502,7 +1844,7 @@ export default function App() {
                     <button
                       className="send-button queue-button"
                       onClick={() => void send()}
-                      disabled={!draft.trim()}
+                      disabled={!draft.trim() && !screenshotAttachment}
                       title="加入后续队列 (Enter)"
                       aria-label="加入后续队列"
                     >
@@ -1523,7 +1865,7 @@ export default function App() {
                   <button
                     className="send-button"
                     onClick={() => void send()}
-                    disabled={!selected || !draft.trim()}
+                    disabled={!selected || (!draft.trim() && !screenshotAttachment)}
                     title="发送 (Enter)"
                     aria-label="发送消息"
                   >
@@ -1598,6 +1940,22 @@ export default function App() {
           defaultCwd={state.settings.defaultCwd}
           onClose={() => setProjectDialogOpen(false)}
           onCreate={createProject}
+        />
+      )}
+
+      {screenCaptureOpen && (
+        <ScreenCaptureDialog
+          onClose={() => setScreenCaptureOpen(false)}
+          onCaptured={(value) => setScreenshotAttachment(value)}
+        />
+      )}
+      {visionKeyDialogOpen && (
+        <VisionKeyDialog
+          onClose={() => setVisionKeyDialogOpen(false)}
+          onSaved={() => {
+            setVisionKeyDialogOpen(false);
+            setScreenCaptureOpen(true);
+          }}
         />
       )}
 

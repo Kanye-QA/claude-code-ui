@@ -31,11 +31,14 @@ export interface ChatMessage {
   costUsd?: number;
   durationMs?: number;
   topic?: string;
+  imagePath?: string;
+  visionSummary?: string;
+  visionModel?: string;
 }
 
 export interface ChatSession {
   id: string;
-  projectId: string;
+  projectId?: string;
   title: string;
   titleEdited?: boolean;
   cwd: string;
@@ -65,6 +68,7 @@ export interface AppSettings {
   defaultPermissionMode: PermissionMode;
   defaultEffort: EffortLevel;
   requestedModel: string;
+  visionModel: string;
   claudePath: string;
   theme: "system" | "light" | "dark";
 }
@@ -105,6 +109,19 @@ export interface ModelCatalogEntry {
   provider: string;
 }
 
+export interface ScreenSource {
+  id: string;
+  name: string;
+  displayId: string;
+  thumbnail: string;
+  width: number;
+  height: number;
+}
+
+export interface VisionKeyStatus {
+  configured: boolean;
+}
+
 export interface ClaudeUIApi {
   getState(): Promise<AppState>;
   getModelCatalog(): Promise<ModelCatalogEntry[]>;
@@ -116,6 +133,7 @@ export interface ClaudeUIApi {
   sendMessage(
     id: string,
     prompt: string,
+    screenshotPath?: string,
   ): Promise<{ userMessageId: string; assistantMessageId?: string; queued: boolean }>;
   stopMessage(id: string): Promise<boolean>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
@@ -124,8 +142,13 @@ export interface ClaudeUIApi {
   openExternal(url: string): Promise<boolean>;
   claudeStatus(): Promise<ClaudeStatus>;
   queryBalance(): Promise<BalanceStatus>;
+  getVisionKeyStatus(): Promise<VisionKeyStatus>;
+  setVisionApiKey(value: string): Promise<VisionKeyStatus>;
   readClipboard(): Promise<string>;
   writeClipboard(text: string): Promise<boolean>;
+  getScreenSources(): Promise<ScreenSource[]>;
+  saveScreenshot(dataUrl: string): Promise<{ path: string; dataUrl: string }>;
+  onScreenShortcut(callback: () => void): () => void;
   onStateChanged(callback: (state: AppState) => void): () => void;
 }
 

@@ -29,8 +29,8 @@ export interface ModelDefinition {
 export const modelDefinitions: ModelDefinition[] = [
   {
     value: "",
-    label: "跟随 CC Switch",
-    description: "使用 CC Switch 当前供应商的默认模型",
+    label: "跟随 Claude Code 配置",
+    description: "使用本机 Claude Code 配置中的默认模型",
     kind: "follow",
   },
   {
@@ -63,10 +63,34 @@ export const modelDefinitions: ModelDefinition[] = [
     description: "DeepSeek V4 Flash 官方模型 ID",
     kind: "deepseek",
   },
+  {
+    value: "deepseek-v4-pro",
+    label: "DeepSeek V4 Pro",
+    description: "DeepSeek V4 Pro 官方模型 ID",
+    kind: "deepseek",
+  },
+  {
+    value: "glm-4v-flash",
+    label: "GLM-4V-Flash（国内免费视觉）",
+    description: "智谱官方免费单图识别模型，适合截图理解",
+    kind: "zhipu",
+  },
+  {
+    value: "gemini-3.6-flash",
+    label: "Gemini 3.6 Flash（视觉）",
+    description: "Google 多模态模型；可用于截图识别",
+    kind: "gemini",
+  },
+  {
+    value: "gemini-3.5-flash-lite",
+    label: "Gemini 3.5 Flash-Lite（视觉）",
+    description: "Google 轻量多模态模型；适合快速识图",
+    kind: "gemini",
+  },
 ];
 
 const providerLabels: Record<ModelIconKind, string> = {
-  follow: "CC Switch",
+  follow: "Claude Code 配置",
   anthropic: "Anthropic / Claude",
   deepseek: "DeepSeek",
   openai: "OpenAI / GPT / Codex",

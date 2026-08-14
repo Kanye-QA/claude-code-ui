@@ -111,8 +111,9 @@ interface ComposerTuningControlsProps {
 }
 
 function displayModel(session: ChatSession): string {
+  const actual = (session.activeModel ?? "").trim();
   const requested = (session.requestedModel ?? "").trim();
-  return modelLabel(requested);
+  return modelLabel(actual || requested);
 }
 
 export function EffortGlyph({ level }: { level: number }) {
@@ -395,8 +396,8 @@ export default function ComposerTuningControls({
           title="选择当前会话使用的模型"
         >
           <ModelBrandIcon
-            model={session.requestedModel}
-            provider={modelCatalog.find((model) => model.id === session.requestedModel)?.provider}
+            model={session.activeModel || session.requestedModel}
+            provider={modelCatalog.find((model) => model.id === (session.activeModel || session.requestedModel))?.provider}
             size={15}
           />
           <span>{displayModel(session)}</span>
@@ -418,8 +419,8 @@ export default function ComposerTuningControls({
                 <strong>选择模型</strong>
                 <small>
                   {modelCatalog.length
-                    ? `已加载 CC Switch 兼容模型目录，共 ${modelCatalog.length} 个模型`
-                    : "可输入任意模型 ID；未检测到 CC Switch 模型库"}
+                    ? `已加载内置模型目录，共 ${modelCatalog.length} 个模型`
+                    : "可输入任意模型 ID；当前目录为空"}
                 </small>
               </span>
             </div>
@@ -454,7 +455,7 @@ export default function ComposerTuningControls({
                 value={modelSearch}
                 onChange={(event) => setModelSearch(event.target.value)}
                 placeholder="搜索模型名称、ID 或供应商"
-                aria-label="搜索 CC Switch 模型"
+                aria-label="搜索模型目录"
               />
               {modelSearch && (
                 <button type="button" onClick={() => setModelSearch("")} aria-label="清空搜索">
@@ -468,9 +469,9 @@ export default function ComposerTuningControls({
                 ? `搜索结果 · ${matchingModelCount}`
                 : `模型供应商 · ${groupedModelOptions.length}`}
             </div>
-            <div className="tuning-option-list model-catalog-list" aria-label="CC Switch 模型库">
+            <div className="tuning-option-list model-catalog-list" aria-label="内置模型库">
               {followOption && (
-                <div className="model-follow-shortcut" role="group" aria-label="CC Switch 快捷选项">
+                <div className="model-follow-shortcut" role="group" aria-label="Claude Code 配置快捷选项">
                   {renderModelOption(followOption, "model-follow-option")}
                 </div>
               )}
@@ -533,7 +534,7 @@ export default function ComposerTuningControls({
 
             <div className="tuning-popover-note model-catalog-note">
               <Info size={13} />
-              名称与图标来自 CC Switch；是否可调用由当前供应商决定。
+              名称与图标来自内置品牌目录；是否可调用由当前供应商决定。
             </div>
 
             <div className="tuning-popover-footer">

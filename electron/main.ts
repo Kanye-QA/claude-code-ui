@@ -2,9 +2,13 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  desktopCapturer,
   dialog,
   ipcMain,
+  globalShortcut,
+  nativeImage,
   nativeTheme,
+  safeStorage,
   shell,
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -20,7 +24,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { bundledModelCatalog } from "./bundledModelCatalog";
 
 type PermissionMode = "plan" | "auto" | "acceptEdits" | "dontAsk";
@@ -58,11 +61,14 @@ interface ChatMessage {
   costUsd?: number;
   durationMs?: number;
   topic?: string;
+  imagePath?: string;
+  visionSummary?: string;
+  visionModel?: string;
 }
 
 interface ChatSession {
   id: string;
-  projectId: string;
+  projectId?: string;
   title: string;
   titleEdited?: boolean;
   cwd: string;
@@ -92,6 +98,7 @@ interface AppSettings {
   defaultPermissionMode: PermissionMode;
   defaultEffort: EffortLevel;
   requestedModel: string;
+  visionModel: string;
   claudePath: string;
   theme: "system" | "light" | "dark";
 }
@@ -141,8 +148,8 @@ const activeJobs = new Map<string, ActiveJob>();
 const syncTimers = new Map<string, NodeJS.Timeout>();
 let saveTimer: NodeJS.Timeout | null = null;
 const previewMode = process.env.CLAUDE_UI_MOCK === "1";
-const LEGACY_DEEPSEEK_MODEL = "deepseek-v4-pro";
 const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
+const DEFAULT_VISION_MODEL = "glm-4v-flash";
 const MAX_QUEUED_MESSAGES = 20;
 
 const effortLevels: EffortLevel[] = ["", "low", "medium", "high", "xhigh", "max"];
@@ -169,10 +176,7 @@ function isEffortLevel(value: unknown): value is EffortLevel {
 
 function migrateModel(value: unknown): string {
   if (typeof value !== "string") return "";
-  const trimmed = value.trim();
-  return trimmed.toLowerCase() === LEGACY_DEEPSEEK_MODEL
-    ? DEFAULT_DEEPSEEK_MODEL
-    : trimmed;
+  return value.trim();
 }
 
 function emptyContextUsage(): ContextUsage {
@@ -216,6 +220,7 @@ function defaultStore(): AppStore {
       defaultPermissionMode: "auto",
       defaultEffort: "",
       requestedModel: "",
+      visionModel: DEFAULT_VISION_MODEL,
       claudePath: "",
       theme: "system",
     },
@@ -511,6 +516,7 @@ function loadStore(): AppStore {
     const defaults = defaultStore();
     parsed.settings = { ...defaults.settings, ...parsed.settings };
     parsed.settings.requestedModel = migrateModel(parsed.settings.requestedModel);
+    parsed.settings.visionModel = migrateModel(parsed.settings.visionModel) || DEFAULT_VISION_MODEL;
     const projects: Project[] = Array.isArray(parsed.projects)
       ? parsed.projects
           .filter(
@@ -539,14 +545,17 @@ function loadStore(): AppStore {
     };
     parsed.sessions = parsed.sessions.map((session) => {
       const normalizedCwd = typeof session.cwd === "string" ? session.cwd : defaults.settings.defaultCwd;
-      const existingProject = projects.find(
-        (project) =>
-          project.id === session.projectId && sameDirectoryPath(project.cwd, normalizedCwd),
-      );
-      const project = existingProject ?? projectForCwd(normalizedCwd);
+      const hasProjectId = typeof session.projectId === "string" && session.projectId.trim().length > 0;
+      const existingProject = hasProjectId
+        ? projects.find(
+            (project) =>
+              project.id === session.projectId && sameDirectoryPath(project.cwd, normalizedCwd),
+          )
+        : undefined;
+      const project = hasProjectId ? existingProject ?? projectForCwd(normalizedCwd) : undefined;
       return {
       ...session,
-      projectId: project.id,
+      projectId: project?.id,
       cwd: normalizedCwd,
       titleEdited: Boolean(session.titleEdited),
       status: "idle",
@@ -555,10 +564,7 @@ function loadStore(): AppStore {
         ? session.effort
         : parsed.settings.defaultEffort,
       requestedModel: migrateModel(session.requestedModel),
-      activeModel:
-        session.activeModel?.trim().toLowerCase() === LEGACY_DEEPSEEK_MODEL
-          ? undefined
-          : session.activeModel,
+      activeModel: session.activeModel,
       contextUsage: normalizeContextUsage(session.contextUsage),
       messages: Array.isArray(session.messages)
         ? session.messages.map((message) =>
@@ -615,6 +621,239 @@ function sessionById(id: string): ChatSession {
   const session = store.sessions.find((item) => item.id === id);
   if (!session) throw new Error("会话不存在。请新建一个会话后重试。");
   return session;
+}
+
+function validateScreenshotPath(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const candidate = resolve(value);
+  const root = resolve(join(app.getPath("userData"), "screenshots"));
+  const candidateLower = candidate.toLowerCase();
+  const rootLower = root.toLowerCase();
+  if (candidateLower !== rootLower && !candidateLower.startsWith(`${rootLower}\\`)) {
+    throw new Error("截图文件只能来自本应用的截图目录。");
+  }
+  const stats = statSync(candidate);
+  if (!stats.isFile() || stats.size > 20 * 1024 * 1024 || !/\.png$/i.test(candidate)) {
+    throw new Error("截图文件无效或过大，请重新截取。");
+  }
+  return candidate;
+}
+
+function resolveProviderApiKey(environmentNames: string[]): string | undefined {
+  const environmentKey = environmentNames
+    .map((name) => process.env[name])
+    .find((value) => typeof value === "string" && value.trim());
+  return environmentKey?.trim() || undefined;
+}
+
+function visionApiKeyPath(): string {
+  return join(app.getPath("userData"), "vision-api-key.bin");
+}
+
+function readStoredVisionApiKey(): string | undefined {
+  if (!safeStorage.isEncryptionAvailable()) return undefined;
+  try {
+    if (!existsSync(visionApiKeyPath())) return undefined;
+    const value = safeStorage.decryptString(readFileSync(visionApiKeyPath()));
+    return value.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveVisionApiKey(value: string): void {
+  const key = value.trim();
+  const path = visionApiKeyPath();
+  if (!key) {
+    if (existsSync(path)) unlinkSync(path);
+    return;
+  }
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("Windows 凭据加密不可用，请改用 ZHIPU_API_KEY 环境变量。");
+  }
+  const temporaryPath = `${path}.tmp-${randomUUID()}`;
+  writeFileSync(temporaryPath, safeStorage.encryptString(key));
+  renameSync(temporaryPath, path);
+}
+
+function resolveGeminiApiKey(): string | undefined {
+  return resolveProviderApiKey([
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+  ]);
+}
+
+function resolveZhipuApiKey(): string | undefined {
+  return (
+    resolveProviderApiKey([
+      "ZHIPU_API_KEY",
+      "ZHIPUAI_API_KEY",
+      "BIGMODEL_API_KEY",
+      "GLM_API_KEY",
+    ]) ?? readStoredVisionApiKey()
+  );
+}
+
+function isDirectVisionModel(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized.startsWith("gemini-") || /^glm-(?:4v|4\.6v)/.test(normalized);
+}
+
+async function analyzeScreenshotWithGemini(
+  imagePath: string,
+  model: string,
+  userPrompt: string,
+): Promise<string> {
+  const apiKey = resolveGeminiApiKey();
+  if (!apiKey) {
+    throw new Error(
+      "未找到 Gemini API Key。请设置 GEMINI_API_KEY；Google AI Studio 的免费额度受账号和地区限制。",
+    );
+  }
+  const stats = statSync(imagePath);
+  if (stats.size > 10 * 1024 * 1024) {
+    throw new Error("截图超过视觉模型的 10 MB 限制，请重新截取较小画面。");
+  }
+  const modelId = model.trim().replace(/^models\//i, "");
+  const imageData = readFileSync(imagePath).toString("base64");
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: `请识别这张桌面截图，提取与用户任务有关的界面文字、错误、文件名和关键状态。只输出事实和可执行线索，不要代替主模型修改文件。用户补充要求：${userPrompt}`,
+              },
+              { inline_data: { mime_type: "image/png", data: imageData } },
+            ],
+          },
+        ],
+        generationConfig: { maxOutputTokens: 2_000, temperature: 0.1 },
+      }),
+    },
+  );
+  const payload = (await response.json()) as {
+    error?: { message?: unknown };
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: unknown }> };
+    }>;
+  };
+  if (!response.ok) {
+    const message =
+      typeof payload.error?.message === "string" ? payload.error.message.slice(0, 500) : `HTTP ${response.status}`;
+    throw new Error(`Gemini 截图识别失败：${message}`);
+  }
+  const result = (payload.candidates ?? [])
+    .flatMap((candidate) => candidate.content?.parts ?? [])
+    .map((part) => (typeof part.text === "string" ? part.text.trim() : ""))
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 12_000);
+  if (!result) throw new Error("Gemini 没有返回截图识别结果，请重试。");
+  return result;
+}
+
+async function analyzeScreenshotWithZhipu(
+  imagePath: string,
+  model: string,
+  userPrompt: string,
+): Promise<string> {
+  const apiKey = resolveZhipuApiKey();
+  if (!apiKey) {
+    throw new Error(
+      "未找到智谱 API Key。请在智谱开放平台配置 ZHIPU_API_KEY；GLM-4V-Flash 模型本身免费，但仍需要你自己的账号密钥。",
+    );
+  }
+  const stats = statSync(imagePath);
+  if (stats.size > 10 * 1024 * 1024) {
+    throw new Error("截图超过视觉模型的 10 MB 限制，请重新截取较小画面。");
+  }
+  const imageData = readFileSync(imagePath).toString("base64");
+  const response = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model.trim() || "glm-4v-flash",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `请识别这张桌面截图，提取与用户任务有关的界面文字、错误、文件名和关键状态。只输出事实和可执行线索，不要代替主模型修改文件。用户补充要求：${userPrompt}`,
+            },
+            {
+              type: "image_url",
+              image_url: { url: `data:image/png;base64,${imageData}` },
+            },
+          ],
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 2_000,
+    }),
+  });
+  const payload = (await response.json()) as {
+    error?: { message?: unknown };
+    choices?: Array<{
+      message?: { content?: unknown };
+    }>;
+  };
+  if (!response.ok) {
+    const message =
+      typeof payload.error?.message === "string" ? payload.error.message.slice(0, 500) : `HTTP ${response.status}`;
+    throw new Error(`GLM-4V-Flash 截图识别失败：${message}`);
+  }
+  const content = payload.choices?.[0]?.message?.content;
+  const result =
+    typeof content === "string"
+      ? content.trim()
+      : Array.isArray(content)
+        ? content
+            .map((part) =>
+              part && typeof part === "object" && "text" in part && typeof part.text === "string"
+                ? part.text.trim()
+                : "",
+            )
+            .filter(Boolean)
+            .join("\n")
+        : "";
+  if (!result) throw new Error("GLM-4V-Flash 没有返回截图识别结果，请重试。");
+  return result.slice(0, 12_000);
+}
+
+async function analyzeScreenshot(
+  imagePath: string,
+  model: string,
+  userPrompt: string,
+): Promise<string> {
+  const normalized = model.trim().toLowerCase();
+  if (/^glm-(?:4v|4\.6v)/.test(normalized)) {
+    return analyzeScreenshotWithZhipu(imagePath, model, userPrompt);
+  }
+  return analyzeScreenshotWithGemini(imagePath, model, userPrompt);
+}
+
+function promptWithScreenshot(
+  prompt: string,
+  imagePath?: string,
+  visionSummary?: string,
+  visionModel?: string,
+): string {
+  if (visionSummary) {
+    return `${prompt}\n\n[截图识别结果，来自 ${visionModel || "视觉模型"}]\n${visionSummary}\n\n请基于上面的截图识别结果继续完成原任务；如果识别结果不足，请先说明需要补充什么。`;
+  }
+  if (!imagePath) return prompt;
+  return `${prompt}\n\n[已附加截图：${imagePath}]\n请先使用 Read 工具读取这张 PNG 截图，再结合截图完成任务；如果当前模型不支持图片，请明确说明。`;
 }
 
 function assistantMessage(session: ChatSession, id: string): ChatMessage {
@@ -712,39 +951,13 @@ function modelProvider(modelId: string, displayName: string): string {
   return "custom";
 }
 
-function loadCCSwitchModels(): ModelCatalogEntry[] {
-  const bundled = bundledModelCatalog.map((model) => ({
+function loadBundledModels(): ModelCatalogEntry[] {
+  return bundledModelCatalog
+    .map((model) => ({
     ...model,
     provider: modelProvider(model.id, model.name),
-  }));
-  const databasePath = join(app.getPath("home"), ".cc-switch", "cc-switch.db");
-  if (!existsSync(databasePath)) return bundled;
-  let database: DatabaseSync | null = null;
-  try {
-    database = new DatabaseSync(databasePath, { readOnly: true });
-    const rows = database
-      .prepare(
-        "SELECT model_id, display_name FROM model_pricing WHERE model_id IS NOT NULL ORDER BY model_id",
-      )
-      .all() as Array<Record<string, unknown>>;
-    const liveModels = rows.flatMap((row): ModelCatalogEntry[] => {
-      if (typeof row.model_id !== "string" || !row.model_id.trim()) return [];
-      const id = row.model_id.trim();
-      const name =
-        typeof row.display_name === "string" && row.display_name.trim()
-          ? row.display_name.trim()
-          : id;
-      return [{ id, name, provider: modelProvider(id, name) }];
-    });
-    if (!liveModels.length) return bundled;
-    const merged = new Map(bundled.map((model) => [model.id, model]));
-    for (const model of liveModels) merged.set(model.id, model);
-    return [...merged.values()].sort((left, right) => left.id.localeCompare(right.id));
-  } catch {
-    return bundled;
-  } finally {
-    database?.close();
-  }
+  }))
+    .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function balanceResult(
@@ -1293,13 +1506,30 @@ function startNextQueuedMessage(session: ChatSession): boolean {
   }
 
   const queued = session.messages[queuedIndex];
+  let imagePath: string | undefined;
+  try {
+    imagePath = queued.visionSummary ? undefined : validateScreenshotPath(queued.imagePath);
+  } catch (error) {
+    queued.status = "stopped";
+    queued.error = error instanceof Error ? error.message : String(error);
+    session.status = "error";
+    return false;
+  }
   queued.status = "complete";
   delete queued.error;
   const response = createAssistantMessage();
   session.messages.splice(queuedIndex + 1, 0, response);
   session.updatedAt = now();
   session.status = "starting";
-  startClaude(session, queued.content, response.id);
+  startClaude(
+    session,
+    queued.content,
+    response.id,
+    imagePath,
+    imagePath ? store.settings.visionModel.trim() || undefined : undefined,
+    queued.visionSummary,
+    queued.visionModel,
+  );
   return true;
 }
 
@@ -1354,7 +1584,15 @@ function finishJob(sessionId: string, exitCode: number | null): void {
   scheduleSync(sessionId, true);
 }
 
-function startClaude(session: ChatSession, prompt: string, assistantId: string): void {
+function startClaude(
+  session: ChatSession,
+  prompt: string,
+  assistantId: string,
+  imagePath?: string,
+  modelOverride?: string,
+  visionSummary?: string,
+  visionModel?: string,
+): void {
   const executable = resolveClaudeExecutable();
   const args = [
     "-p",
@@ -1368,8 +1606,9 @@ function startClaude(session: ChatSession, prompt: string, assistantId: string):
     "false",
   ];
 
-  if (session.requestedModel?.trim()) {
-    args.push("--model", session.requestedModel.trim());
+  const requestedModel = modelOverride?.trim() || session.requestedModel?.trim();
+  if (requestedModel) {
+    args.push("--model", requestedModel);
   }
   if (session.effort) args.push("--effort", session.effort);
   if (session.started) {
@@ -1438,17 +1677,60 @@ function startClaude(session: ChatSession, prompt: string, assistantId: string):
     finishJob(session.id, code);
   });
 
-  child.stdin.end(prompt, "utf8");
+  child.stdin.end(promptWithScreenshot(prompt, imagePath, visionSummary, visionModel), "utf8");
   scheduleSync(session.id, true);
 }
 
 function registerIpc(): void {
   ipcMain.handle("state:get", () => publicState());
-  ipcMain.handle("models:catalog", () => loadCCSwitchModels());
+  ipcMain.handle("models:catalog", () => loadBundledModels());
+  ipcMain.handle("vision:key-status", () => ({ configured: Boolean(resolveZhipuApiKey()) }));
+  ipcMain.handle("vision:key:set", (_event, rawValue: unknown) => {
+    if (typeof rawValue !== "string" || rawValue.trim().length > 512) {
+      throw new Error("智谱 API Key 格式不正确，请重新输入。");
+    }
+    saveVisionApiKey(rawValue);
+    return { configured: Boolean(resolveZhipuApiKey()) };
+  });
   ipcMain.handle("clipboard:readText", () => clipboard.readText());
   ipcMain.handle("clipboard:writeText", (_event, value: unknown) => {
     clipboard.writeText(typeof value === "string" ? value : String(value ?? ""));
     return true;
+  });
+
+  ipcMain.handle("screen:sources", async () => {
+    const sources = await desktopCapturer.getSources({
+      types: ["screen", "window"],
+      thumbnailSize: { width: 4096, height: 4096 },
+      fetchWindowIcons: false,
+    });
+    return sources.map((source) => {
+      const size = source.thumbnail.getSize();
+      return {
+        id: source.id,
+        name: source.name,
+        displayId: source.display_id,
+        thumbnail: source.thumbnail.toDataURL(),
+        width: size.width,
+        height: size.height,
+      };
+    });
+  });
+
+  ipcMain.handle("screen:save", (_event, rawDataUrl: unknown) => {
+    if (typeof rawDataUrl !== "string" || rawDataUrl.length > 50 * 1024 * 1024) {
+      throw new Error("截图数据无效或过大，请重新截取。");
+    }
+    if (!/^data:image\/(?:png|jpeg);base64,[a-z0-9+/=]+$/i.test(rawDataUrl)) {
+      throw new Error("只支持 PNG 或 JPEG 截图。");
+    }
+    const image = nativeImage.createFromDataURL(rawDataUrl);
+    if (image.isEmpty()) throw new Error("截图读取失败，请重新截取。");
+    const directory = join(app.getPath("userData"), "screenshots");
+    mkdirSync(directory, { recursive: true });
+    const filePath = join(directory, `screenshot-${Date.now()}-${randomUUID()}.png`);
+    writeFileSync(filePath, image.toPNG());
+    return { path: filePath, dataUrl: image.toDataURL() };
   });
 
   ipcMain.handle("project:create", (_event, input: Pick<Project, "name" | "cwd">) => {
@@ -1482,20 +1764,16 @@ function registerIpc(): void {
         ? resolve(input.cwd)
         : store.settings.defaultCwd;
     if (!input?.projectId && !isDirectory(requestedCwd)) {
-      throw new Error("项目文件夹不存在，请重新选择文件夹并新建项目。");
+      throw new Error("工作目录不存在，请在设置中选择一个有效文件夹。");
     }
     const project = input?.projectId
       ? projectById(input.projectId)
-      : store.projects.find((item) => sameDirectoryPath(item.cwd, requestedCwd)) ?? (() => {
-          const created = createProjectRecord("", requestedCwd);
-          store.projects.push(created);
-          return created;
-        })();
-    const projectCwd = requireExistingProjectDirectory(project);
+      : undefined;
+    const projectCwd = project ? requireExistingProjectDirectory(project) : requestedCwd;
     const timestamp = now();
     const session: ChatSession = {
       id: randomUUID(),
-      projectId: project.id,
+      projectId: project?.id,
       title: "新会话",
       titleEdited: false,
       cwd: projectCwd,
@@ -1530,11 +1808,8 @@ function registerIpc(): void {
         throw new Error("已开始的会话不能更换项目目录，请在目标项目中新建会话。");
       }
       const project = store.projects.find((item) => sameDirectoryPath(item.cwd, cwd));
-      if (!project) {
-        throw new Error("请先为这个文件夹新建项目，再在项目中创建会话。");
-      }
       session.cwd = cwd;
-      session.projectId = project.id;
+      session.projectId = project?.id;
     }
     if (
       patch.permissionMode &&
@@ -1563,22 +1838,33 @@ function registerIpc(): void {
     return true;
   });
 
-  ipcMain.handle("chat:send", (_event, id: string, rawPrompt: string) => {
+  ipcMain.handle(
+    "chat:send",
+    async (_event, id: string, rawPrompt: string, rawScreenshotPath?: unknown) => {
     const prompt = rawPrompt.trim();
     if (!prompt) throw new Error("请输入消息。");
+    const imagePath = validateScreenshotPath(rawScreenshotPath);
     const session = sessionById(id);
     if (!isDirectory(session.cwd)) throw new Error("当前项目文件夹不存在，请重新选择。");
 
     const timestamp = now();
-    const isQueued = activeJobs.has(id);
+    const wasActive = activeJobs.has(id);
     if (
-      isQueued &&
+      wasActive &&
       session.messages.filter(
         (message) => message.role === "user" && message.status === "queued",
       ).length >= MAX_QUEUED_MESSAGES
     ) {
       throw new Error(`当前会话最多排队 ${MAX_QUEUED_MESSAGES} 条消息。`);
     }
+    const visionModel = imagePath
+      ? store.settings.visionModel.trim() || DEFAULT_VISION_MODEL
+      : "";
+    const visionSummary =
+      imagePath && isDirectVisionModel(visionModel)
+        ? await analyzeScreenshot(imagePath, visionModel, prompt)
+        : undefined;
+    const isQueued = activeJobs.has(id);
     const topic = titleFromPrompt(prompt);
     const userMessage: ChatMessage = {
       id: randomUUID(),
@@ -1587,6 +1873,9 @@ function registerIpc(): void {
       createdAt: timestamp,
       status: isQueued ? "queued" : "complete",
       topic,
+      imagePath,
+      visionSummary,
+      visionModel: visionSummary ? visionModel : undefined,
     };
     if (session.messages.length === 0 && !session.titleEdited) {
       session.title = topic;
@@ -1614,13 +1903,22 @@ function registerIpc(): void {
     const response = createAssistantMessage(timestamp);
     session.messages.push(userMessage, response);
     session.status = "starting";
-    startClaude(session, prompt, response.id);
+    startClaude(
+      session,
+      prompt,
+      response.id,
+      visionSummary ? undefined : imagePath,
+      visionSummary ? undefined : visionModel || undefined,
+      visionSummary,
+      visionSummary ? visionModel : undefined,
+    );
     return {
       userMessageId: userMessage.id,
       assistantMessageId: response.id,
       queued: false,
     };
-  });
+    },
+  );
 
   ipcMain.handle("chat:stop", async (_event, id: string) => {
     const job = activeJobs.get(id);
@@ -1673,6 +1971,9 @@ function registerIpc(): void {
     }
     if (typeof patch.requestedModel === "string") {
       store.settings.requestedModel = migrateModel(patch.requestedModel);
+    }
+    if (typeof patch.visionModel === "string") {
+      store.settings.visionModel = migrateModel(patch.visionModel);
     }
     if (typeof patch.claudePath === "string") {
       const candidate = patch.claudePath.trim();
@@ -1789,6 +2090,11 @@ app.whenReady().then(() => {
   nativeTheme.themeSource = store.settings.theme;
   registerIpc();
   createWindow();
+  if (!globalShortcut.register("CommandOrControl+Shift+4", () => {
+    mainWindow?.webContents.send("screen:shortcut");
+  })) {
+    console.warn("截图快捷键 Ctrl+Shift+4 注册失败，仍可点击输入台截图按钮。");
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -1796,6 +2102,7 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+  globalShortcut.unregisterAll();
   for (const job of activeJobs.values()) {
     job.stopped = true;
     job.child.kill();
