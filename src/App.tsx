@@ -173,7 +173,31 @@ interface SpeechRecognitionLike {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-function MessageView({ message }: { message: ChatMessage }) {
+function voiceRecognitionErrorMessage(error?: string): string {
+  switch (error) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "麦克风权限被系统拒绝。请在 Windows“设置 → 隐私和安全性 → 麦克风”中允许 Claude Code UI。";
+    case "audio-capture":
+      return "没有找到可用的麦克风设备，请检查麦克风是否已连接或被其他应用独占。";
+    case "network":
+      return "麦克风已经打开，但语音识别服务连接失败；请检查网络后重试。";
+    case "no-speech":
+      return "没有检测到清晰语音，请靠近麦克风再说一次。";
+    case "language-not-supported":
+      return "当前语音识别服务不支持中文，请检查系统语音语言设置。";
+    default:
+      return error ? `语音识别暂时不可用（${error}），但麦克风本身已打开。` : "语音识别暂时不可用，请稍后重试。";
+  }
+}
+
+function MessageView({
+  message,
+  onContextMenu,
+}: {
+  message: ChatMessage;
+  onContextMenu?: (event: ReactMouseEvent<HTMLElement>, message: ChatMessage) => void;
+}) {
   const [copied, setCopied] = useState(false);
   const copyMessage = async () => {
     if (!message.content) return;
@@ -188,6 +212,7 @@ function MessageView({ message }: { message: ChatMessage }) {
         id={`conversation-message-${message.id}`}
         data-timeline-message-id={message.id}
         className={`message user-message ${message.status === "queued" ? "queued-message" : ""}`}
+        onContextMenu={(event) => onContextMenu?.(event, message)}
       >
         <div className="user-message-stack">
           <div className="user-bubble">{message.content}</div>
@@ -232,7 +257,12 @@ function MessageView({ message }: { message: ChatMessage }) {
 
   const isEmptyStreaming = message.status === "streaming" && !message.content;
   return (
-      <article id={`conversation-message-${message.id}`} className="message assistant-message">
+      <article
+        id={`conversation-message-${message.id}`}
+        data-timeline-message-id={message.id}
+        className="message assistant-message"
+        onContextMenu={(event) => onContextMenu?.(event, message)}
+      >
         <div className="assistant-avatar">
           <ClaudeMascotIcon />
       </div>
@@ -1043,6 +1073,7 @@ export default function App() {
   const [fileAttachments, setFileAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceStarting, setVoiceStarting] = useState(false);
   const [voiceLevel, setVoiceLevel] = useState(0);
   const [voiceError, setVoiceError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ChatSession | null>(null);
@@ -1054,6 +1085,14 @@ export default function App() {
   const [composerContextMenu, setComposerContextMenu] = useState<{
     x: number;
     y: number;
+    clipboardText: string;
+    selectionText: string;
+  } | null>(null);
+  const [messageContextMenu, setMessageContextMenu] = useState<{
+    x: number;
+    y: number;
+    messageId: string;
+    messageText: string;
     clipboardText: string;
     selectionText: string;
   } | null>(null);
@@ -1077,6 +1116,7 @@ export default function App() {
   const voiceAudioContextRef = useRef<AudioContext | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const voiceMeterUpdatedAtRef = useRef(0);
+  const voiceStartTokenRef = useRef(0);
 
   const selected = state.sessions.find((session) => session.id === selectedId);
   const selectedProject = selected
@@ -1176,22 +1216,23 @@ export default function App() {
     setVoiceLevel(0);
   };
 
-  const startVoiceMeter = async () => {
+  const startVoiceMeter = async (): Promise<boolean> => {
     stopVoiceMeter();
     const getUserMedia = navigator.mediaDevices?.getUserMedia;
     const AudioContextConstructor =
       window.AudioContext ??
       (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!getUserMedia || !AudioContextConstructor) return;
+    if (!getUserMedia) return false;
     try {
       const stream = await getUserMedia.call(navigator.mediaDevices, { audio: true });
+      voiceStreamRef.current = stream;
+      if (!AudioContextConstructor) return true;
       const audioContext = new AudioContextConstructor();
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
       const samples = new Uint8Array(analyser.fftSize);
-      voiceStreamRef.current = stream;
       voiceAudioContextRef.current = audioContext;
       voiceAnalyserRef.current = analyser;
       const update = (timestamp: number) => {
@@ -1210,8 +1251,14 @@ export default function App() {
         voiceMeterFrameRef.current = window.requestAnimationFrame(update);
       };
       voiceMeterFrameRef.current = window.requestAnimationFrame(update);
+      return true;
     } catch {
-      // SpeechRecognition may still work when microphone level analysis is denied.
+      voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
+      voiceStreamRef.current = null;
+      // A failed permission request must stop recognition from starting. This
+      // prevents the old race where the waveform opened but recognition then
+      // reported a misleading "microphone permission" error.
+      return false;
     }
   };
 
@@ -1224,10 +1271,14 @@ export default function App() {
     };
   };
 
-  const toggleVoiceInput = () => {
-    if (voiceListening) {
+  const toggleVoiceInput = async () => {
+    if (voiceListening || voiceStarting) {
+      voiceStartTokenRef.current += 1;
       speechRecognitionRef.current?.stop();
+      speechRecognitionRef.current = null;
       stopVoiceMeter();
+      setVoiceStarting(false);
+      setVoiceListening(false);
       return;
     }
     const browserWindow = window as Window & {
@@ -1236,11 +1287,23 @@ export default function App() {
     };
     const Recognition = browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition;
     if (!Recognition) {
-      setVoiceError("当前系统没有可用的语音识别服务，请检查 Windows 语音识别和网络权限。");
+      setVoiceError("当前系统没有可用的语音识别服务；麦克风权限本身不受影响，请检查 Windows 语音识别设置。");
       return;
     }
+    const startToken = voiceStartTokenRef.current + 1;
+    voiceStartTokenRef.current = startToken;
     setVoiceError("");
+    setVoiceStarting(true);
+    setVoiceListening(true);
     voiceBaseRef.current = draft.trimEnd();
+    const microphoneReady = await startVoiceMeter();
+    if (voiceStartTokenRef.current !== startToken) return;
+    if (!microphoneReady) {
+      setVoiceStarting(false);
+      setVoiceListening(false);
+      setVoiceError("麦克风没有打开，请在 Windows“设置 → 隐私和安全性 → 麦克风”中允许 Claude Code UI 后重试。");
+      return;
+    }
     const recognition = new Recognition();
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -1254,26 +1317,28 @@ export default function App() {
       setDraft(`${base}${base && transcript ? " " : ""}${transcript}`);
     };
     recognition.onerror = (event) => {
-      if (event.error !== "aborted") setVoiceError("语音识别没有启动，请检查麦克风权限后重试。");
+      if (event.error !== "aborted") setVoiceError(voiceRecognitionErrorMessage(event.error));
+      setVoiceStarting(false);
       setVoiceListening(false);
       speechRecognitionRef.current = null;
       stopVoiceMeter();
     };
     recognition.onend = () => {
+      setVoiceStarting(false);
       setVoiceListening(false);
       speechRecognitionRef.current = null;
       stopVoiceMeter();
     };
     speechRecognitionRef.current = recognition;
-    setVoiceListening(true);
-    void startVoiceMeter();
     try {
       recognition.start();
+      setVoiceStarting(false);
     } catch (error) {
       speechRecognitionRef.current = null;
+      setVoiceStarting(false);
       setVoiceListening(false);
       stopVoiceMeter();
-      setVoiceError(error instanceof Error ? error.message : "语音识别启动失败，请重试。");
+      setVoiceError(error instanceof Error ? voiceRecognitionErrorMessage(error.message) : "语音识别启动失败，请重试。");
     }
   };
 
@@ -1517,8 +1582,11 @@ export default function App() {
   }, [draft]);
 
   useEffect(() => {
-    if (!composerContextMenu) return;
-    const close = () => setComposerContextMenu(null);
+    if (!composerContextMenu && !messageContextMenu) return;
+    const close = () => {
+      setComposerContextMenu(null);
+      setMessageContextMenu(null);
+    };
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -1532,7 +1600,7 @@ export default function App() {
       window.removeEventListener("resize", close);
       window.removeEventListener("keydown", closeOnEscape, true);
     };
-  }, [composerContextMenu]);
+  }, [composerContextMenu, messageContextMenu]);
 
   const createSession = async (project?: Project) => {
     try {
@@ -1651,6 +1719,7 @@ export default function App() {
 
   const openComposerContextMenu = async (event: ReactMouseEvent<HTMLTextAreaElement>) => {
     event.preventDefault();
+    setMessageContextMenu(null);
     const x = Math.min(event.clientX, window.innerWidth - 178);
     const y = Math.min(event.clientY, window.innerHeight - 142);
     const textarea = event.currentTarget;
@@ -1665,6 +1734,38 @@ export default function App() {
       const clipboardText = await window.claudeUI.readClipboard();
       setComposerContextMenu((current) =>
         current && current.x === Math.max(8, x) && current.y === Math.max(8, y)
+          ? { ...current, clipboardText }
+          : current,
+      );
+    } catch {
+      // Keep paste disabled when clipboard access is unavailable.
+    }
+  };
+
+  const openMessageContextMenu = async (
+    event: ReactMouseEvent<HTMLElement>,
+    message: ChatMessage,
+  ) => {
+    event.preventDefault();
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    const selectionText =
+      anchor && event.currentTarget.contains(anchor) ? selection?.toString() ?? "" : "";
+    const x = Math.min(event.clientX, window.innerWidth - 198);
+    const y = Math.min(event.clientY, window.innerHeight - 178);
+    setComposerContextMenu(null);
+    setMessageContextMenu({
+      x: Math.max(8, x),
+      y: Math.max(8, y),
+      messageId: message.id,
+      messageText: message.content,
+      clipboardText: "",
+      selectionText,
+    });
+    try {
+      const clipboardText = await window.claudeUI.readClipboard();
+      setMessageContextMenu((current) =>
+        current && current.messageId === message.id && current.x === Math.max(8, x)
           ? { ...current, clipboardText }
           : current,
       );
@@ -1704,6 +1805,40 @@ export default function App() {
       textareaRef.current?.focus();
       textareaRef.current?.select();
     });
+  };
+
+  const copyMessageSelection = async () => {
+    const text = messageContextMenu?.selectionText ?? "";
+    if (text) await window.claudeUI.writeClipboard(text);
+    setMessageContextMenu(null);
+  };
+
+  const copyWholeMessage = async () => {
+    const text = messageContextMenu?.messageText ?? "";
+    if (text) await window.claudeUI.writeClipboard(text);
+    setMessageContextMenu(null);
+  };
+
+  const pasteMessageClipboard = () => {
+    const pasteText = messageContextMenu?.clipboardText ?? "";
+    if (!pasteText) return;
+    setDraft((current) => (current ? `${current}\n${pasteText}` : pasteText));
+    setMessageContextMenu(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const selectAllMessageText = () => {
+    const messageId = messageContextMenu?.messageId;
+    if (!messageId) return;
+    const article = document.getElementById(`conversation-message-${messageId}`);
+    if (article) {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(article);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+    setMessageContextMenu(null);
   };
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2053,7 +2188,11 @@ export default function App() {
             {selected?.messages.length ? (
               <div className="message-column">
                 {selected.messages.map((message) => (
-                  <MessageView key={message.id} message={message} />
+                  <MessageView
+                    key={message.id}
+                    message={message}
+                    onContextMenu={openMessageContextMenu}
+                  />
                 ))}
                 <div ref={endRef} />
               </div>
@@ -2157,6 +2296,14 @@ export default function App() {
               <div className="composer-voice-error">
                 <Mic size={12} />
                 <span>{voiceError}</span>
+                {(voiceError.includes("权限") || voiceError.includes("没有打开")) && (
+                  <button
+                    type="button"
+                    onClick={() => void window.claudeUI.openMicrophoneSettings().catch(reportError)}
+                  >
+                    打开系统设置
+                  </button>
+                )}
               </div>
             )}
             <textarea
@@ -2352,6 +2499,39 @@ export default function App() {
               : "Enter 发送 · Shift + Enter 换行 · 模型、强度和权限从下一条回复开始生效"}
           </div>
         </div>
+        {voiceListening && (
+          <div
+            className="voice-workbench-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="语音输入"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="voice-workbench-card">
+              <div className="voice-workbench-icon" aria-hidden="true">
+                <Mic size={26} />
+              </div>
+              <p className="eyebrow">工作台语音输入</p>
+              <h2>{voiceStarting ? "正在打开麦克风" : "正在聆听"}</h2>
+              <p className="voice-workbench-hint">
+                {voiceStarting ? "请在系统提示中允许麦克风，随后开始说话。" : "说完后点击停止，识别文字会回到输入框。"}
+              </p>
+              <div className="voice-workbench-wave" aria-hidden="true">
+                {Array.from({ length: 25 }, (_, index) => (
+                  <i key={index} style={voiceBarStyle(index % 11)} />
+                ))}
+              </div>
+              <button
+                type="button"
+                className="voice-workbench-stop"
+                onClick={() => void toggleVoiceInput()}
+              >
+                <MicOff size={15} />
+                停止语音输入
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       {composerContextMenu && (
@@ -2391,6 +2571,47 @@ export default function App() {
           >
             <TextSelect size={14} />
             <span>全选</span>
+            <kbd>Ctrl A</kbd>
+          </button>
+        </div>
+      )}
+
+      {messageContextMenu && (
+        <div
+          className="composer-context-menu message-context-menu"
+          role="menu"
+          aria-label="消息编辑菜单"
+          style={{ left: messageContextMenu.x, top: messageContextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void copyMessageSelection()}
+            disabled={!messageContextMenu.selectionText}
+          >
+            <Copy size={14} />
+            <span>复制选中文字</span>
+            <kbd>Ctrl C</kbd>
+          </button>
+          <button type="button" role="menuitem" onClick={() => void copyWholeMessage()} disabled={!messageContextMenu.messageText}>
+            <Copy size={14} />
+            <span>复制整条消息</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={pasteMessageClipboard}
+            disabled={!messageContextMenu.clipboardText}
+          >
+            <ClipboardPaste size={14} />
+            <span>粘贴到输入框</span>
+            <kbd>Ctrl V</kbd>
+          </button>
+          <span className="context-menu-separator" />
+          <button type="button" role="menuitem" onClick={selectAllMessageText} disabled={!messageContextMenu.messageText}>
+            <TextSelect size={14} />
+            <span>全选消息</span>
             <kbd>Ctrl A</kbd>
           </button>
         </div>

@@ -6,7 +6,7 @@
 
 [![最新正式版](https://img.shields.io/github/v/release/Kanye-QA/claude-code-ui?label=%E6%9C%80%E6%96%B0%E6%AD%A3%E5%BC%8F%E7%89%88)](https://github.com/Kanye-QA/claude-code-ui/releases/latest)
 
-**当前版本：5.4**  ·  [下载 Windows 便携版（Claude-Code-UI-5.4-portable.exe）](https://github.com/Kanye-QA/claude-code-ui/releases/download/v5.4/Claude-Code-UI-5.4-portable.exe)
+**当前版本：5.5**  ·  [下载 Windows 便携版（Claude-Code-UI-5.5-portable.exe）](https://github.com/Kanye-QA/claude-code-ui/releases/download/v5.5/Claude-Code-UI-5.5-portable.exe)
 
 下载后双击即可运行，不需要安装 Node.js。旧版本和完整说明都保留在 [Releases](https://github.com/Kanye-QA/claude-code-ui/releases)。
 
@@ -18,10 +18,13 @@
 
 ## 更新摘要
 
-### 5.4 正式版
+### 5.5 正式版
 
-- 修复从桌面任务栏启动时出现两个任务栏窗口的问题：窗口使用固定 AppUserModelID，任务栏快捷方式指向稳定的解包程序，不再直接指向便携版启动器。
-- 任务栏图标、窗口图标和重新打开行为统一到同一个 Claude Code UI 应用分组。
+- 修复任务栏重复窗口：应用现在只允许一个实例运行，重复点击任务栏图标会唤醒已有窗口；任务栏快捷方式与窗口使用同一个应用分组标识。
+- 修复语音输入的权限竞态：先确认麦克风流已真正打开，再启动语音识别；“权限拒绝、找不到设备、没有声音、识别服务网络不可用”会分别提示，不再把网络问题误报成麦克风权限问题。
+- 语音输入时显示覆盖工作台的实时声纹面板，支持在面板中停止录音；麦克风权限错误可直接打开 Windows 隐私设置。
+- 对话和 AI 回答支持右键菜单：复制选中文字、复制整条消息、粘贴到输入框和全选，菜单保持项目主题风格。
+- 本次重新打包前已撤下未稳定发布的 5.4，桌面与任务栏统一更新为 5.5。
 
 ### 5.3 正式版
 
@@ -98,20 +101,20 @@
 
 ## 使用便携版
 
-从 GitHub Releases 下载 5.4 正式版 `Claude-Code-UI-5.4-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
+从 GitHub Releases 下载 5.5 正式版 `Claude-Code-UI-5.5-portable.exe`，双击即可启动。便携版已经包含桌面界面和 Electron，不需要另外安装 Node.js。
 
 首次运行若出现 Windows SmartScreen 提示，请先核对下载来源和 Release 页 SHA-256。当前社区构建没有商业代码签名；提示不等于已检测到病毒，也不要求必须上架 Microsoft Store，但不建议关闭 Defender 或 Smart App Control。
 
 ## 基本使用
 
-1. 打开 Claude Code UI 5.4。
+1. 打开 Claude Code UI 5.5。
 2. 点击左侧“新建项目”并选择项目目录；名称可留空，由应用根据本地项目信息自动识别。创建后点击项目右侧“+”或“新建第一段会话”开始对话。
 3. 未选择项目时可在“未归类对话”区域新建独立会话；项目和会话标题旁的铅笔都可直接重命名。
 4. 输入任务并按 Enter 发送；Shift + Enter 换行。
 5. 点击输入台“+”可选择截图、文件/PDF或项目文件夹；附件会在发送前显示预览，可单独移除。
-6. 点击麦克风按钮开始语音转文字，工作台会显示实时声波；确认输入内容后再发送。如果系统没有可用语音服务，输入台会给出提示。
+6. 点击麦克风按钮开始语音转文字，工作台会显示覆盖式实时声纹；确认输入内容后再发送。如果识别服务网络不可用，应用会明确提示“麦克风已打开”，不会误导为权限错误。
 7. 使用输入台按钮切换模型、推理强度和权限模式。
-8. 对话较长时，可使用右侧任务时间线查看每一阶段的主题并跳转定位。
+8. 对话较长时，可使用右侧任务时间线查看每一阶段的主题并跳转定位；在消息上选择文字后右键，可复制或粘贴到输入框。
 
 模型选择“跟随 Claude Code 配置”时，不传入模型覆盖参数，由本机 Claude Code 配置决定实际模型；也可以选择 `sonnet`、`opus`、`haiku`、`fable`、`deepseek-v4-pro`、`deepseek-v4-flash`，或输入其他模型 ID。每次收到 Claude Code 的运行回显后，界面会用“实际”标记确认结果。
 

@@ -161,6 +161,7 @@ export interface ClaudeUIApi {
   selectDirectory(initialPath?: string): Promise<string | null>;
   openPath(path: string): Promise<string>;
   openExternal(url: string): Promise<boolean>;
+  openMicrophoneSettings(): Promise<boolean>;
   claudeStatus(): Promise<ClaudeStatus>;
   queryBalance(): Promise<BalanceStatus>;
   getVisionKeyStatus(): Promise<VisionKeyStatus>;

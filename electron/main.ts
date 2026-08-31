@@ -2196,6 +2196,14 @@ function registerIpc(): void {
     return true;
   });
 
+  ipcMain.handle("system:microphone-settings", async () => {
+    if (process.platform !== "win32") {
+      throw new Error("请在系统设置中开启麦克风权限。");
+    }
+    await shell.openExternal("ms-settings:privacy-microphone");
+    return true;
+  });
+
   ipcMain.handle("claude:status", async () => {
     const executable = resolveClaudeExecutable();
     return await new Promise((resolveStatus) => {
@@ -2274,7 +2282,23 @@ if (previewMode) {
   app.setPath("userData", join(app.getPath("temp"), "Claude-Code-UI-本地测试版"));
 }
 
+// A pinned shortcut can start a second copy of the portable executable. Keep
+// one browser window per user session so clicking the taskbar icon focuses the
+// existing window instead of creating a second taskbar button.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return;
   if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
   // The renderer shows the themed consent dialog before requesting the microphone.
   // Electron has no separate "public network" permission: this app only makes

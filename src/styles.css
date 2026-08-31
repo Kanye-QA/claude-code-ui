@@ -4296,6 +4296,113 @@ summary:focus-visible {
   color: color-mix(in srgb, var(--red) 78%, var(--text-soft));
 }
 
+.voice-workbench-overlay {
+  position: absolute;
+  z-index: 5;
+  inset: 42px 0 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background:
+    radial-gradient(circle at 50% 44%, color-mix(in srgb, var(--accent-soft) 82%, transparent), transparent 42%),
+    color-mix(in srgb, var(--panel) 86%, black 14%);
+  backdrop-filter: blur(9px);
+  animation: voice-overlay-in 160ms ease-out;
+}
+
+.voice-workbench-card {
+  display: flex;
+  width: min(560px, 100%);
+  min-height: 270px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 34px 34px 30px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 91%, var(--panel));
+  box-shadow: 0 25px 72px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.025) inset;
+}
+
+.voice-workbench-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  margin-bottom: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--border));
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent-soft) 45%, transparent);
+  animation: voice-pulse 1.15s ease-in-out infinite;
+}
+
+.voice-workbench-card .eyebrow {
+  margin: 0 0 5px;
+}
+
+.voice-workbench-card h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 650;
+}
+
+.voice-workbench-hint {
+  margin: 9px 0 20px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.voice-workbench-wave {
+  display: flex;
+  width: min(430px, 100%);
+  height: 66px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 22px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.voice-workbench-wave i {
+  display: block;
+  width: 4px;
+  min-height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+  transition: height 70ms ease-out;
+  animation: voice-wave 620ms ease-in-out infinite alternate;
+}
+
+.voice-workbench-stop {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--red) 43%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--red) 13%, var(--surface));
+  color: color-mix(in srgb, var(--red) 86%, var(--text));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.voice-workbench-stop:hover {
+  background: color-mix(in srgb, var(--red) 22%, var(--surface));
+}
+
+.message-context-menu {
+  width: 202px;
+}
+
 .voice-live-label {
   flex: 0 0 auto;
   font-size: 10px;
@@ -4415,9 +4522,33 @@ summary:focus-visible {
 }
 
 .composer-voice-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 3px 9px 0;
   color: var(--red);
   font-size: 10px;
+}
+
+.composer-voice-error span {
+  min-width: 0;
+  flex: 1;
+}
+
+.composer-voice-error button {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid color-mix(in srgb, var(--red) 38%, var(--border));
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.composer-voice-error button:hover {
+  background: color-mix(in srgb, var(--red) 13%, transparent);
 }
 
 .file-attachment-note {
@@ -4435,6 +4566,13 @@ summary:focus-visible {
 
   50% {
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 12%, transparent);
+  }
+}
+
+@keyframes voice-overlay-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0);
   }
 }
 

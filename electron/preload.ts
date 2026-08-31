@@ -18,6 +18,7 @@ const api = {
     ipcRenderer.invoke("dialog:directory", initialPath),
   openPath: (path: string) => ipcRenderer.invoke("path:open", path),
   openExternal: (url: string) => ipcRenderer.invoke("external:open", url),
+  openMicrophoneSettings: () => ipcRenderer.invoke("system:microphone-settings"),
   claudeStatus: () => ipcRenderer.invoke("claude:status"),
   queryBalance: () => ipcRenderer.invoke("balance:query"),
   getVisionKeyStatus: () => ipcRenderer.invoke("vision:key-status"),
